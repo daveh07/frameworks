@@ -1,0 +1,31 @@
+[package]
+name = "calculix-service"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Web framework
+axum = "0.7"
+tokio = { version = "1.35", features = ["full"] }
+tower-http = { version = "0.5", features = ["cors"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+thiserror = "1.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Utilities
+chrono = { version = "0.4", features = ["serde"] }
+tempfile = "3.8"
+uuid = { version = "1.6", features = ["v4", "serde"] }
+regex = "1.10"
+
+[[bin]]
+name = "plate_benchmark"
+path = "src/bin/plate_benchmark.rs"

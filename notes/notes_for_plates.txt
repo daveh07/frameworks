@@ -1,0 +1,4000 @@
+(function (global) {
+    const SW = (global.SWViewport = global.SWViewport || {});
+    
+    const ELEMENT_LABEL_CANVAS_SIZE = 128;
+
+function drawElementLabelCanvas(ctx, size, text) {
+    // Clear canvas - transparent background
+    ctx.clearRect(0, 0, size, size);
+
+    // Draw text
+    ctx.font = `bold ${Math.floor(size * 0.5)}px Arial`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = "white";
+    ctx.fillText(text, size / 2, size / 2);
+}
+
+function createElementLabelSprite(text) {
+    const THREE = global.THREE;
+    if (!THREE) return null;
+    const canvas = document.createElement("canvas");
+    canvas.width = ELEMENT_LABEL_CANVAS_SIZE;
+    canvas.height = ELEMENT_LABEL_CANVAS_SIZE;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+        console.warn("Failed to create 2D context for element label sprite");
+        return null;
+    }
+
+    drawElementLabelCanvas(ctx, ELEMENT_LABEL_CANVAS_SIZE, text);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.needsUpdate = true;
+
+    const material = new THREE.SpriteMaterial({ 
+        map: texture,
+        depthTest: false,
+        depthWrite: false
+    });
+    const sprite = new THREE.Sprite(material);
+    sprite.userData = Object.assign({}, sprite.userData || {}, {
+        labelCanvas: canvas,
+        labelContext: ctx,
+        labelTexture: texture,
+        baseText: text,
+        isElementLabelSprite: true,
+    });
+    return sprite;
+}    function updateElementLabelSprite(sprite, text) {
+        if (!sprite || !sprite.userData) return;
+        const canvas = sprite.userData.labelCanvas;
+        const ctx = sprite.userData.labelContext;
+        if (!canvas || !ctx) return;
+        drawElementLabelCanvas(ctx, canvas.width, text);
+        sprite.userData.baseText = text;
+        if (sprite.material && sprite.material.map) {
+            sprite.material.map.needsUpdate = true;
+        }
+    }
+
+    function disposeElementLabelSprite(sprite) {
+        if (!sprite) return;
+        if (sprite.material && sprite.material.map) {
+            sprite.material.map.dispose();
+        }
+        if (sprite.material) {
+            sprite.material.dispose();
+        }
+    }
+
+    function dispatchViewportEvent(name, payload) {
+        if (!global || !global.window) return;
+        try {
+            if (payload === undefined) {
+                global.window.dispatchEvent(new CustomEvent(name));
+            } else {
+                const detail = typeof payload === "string" ? payload : JSON.stringify(payload);
+                global.window.dispatchEvent(new CustomEvent(name, { detail }));
+            }
+        } catch (err) {
+            console.error(`Failed to dispatch ${name}`, err);
+        }
+    }
+
+    const Manager = SW.ViewportManager;
+    if (Manager) {
+        console.log("PlatesModule initialized - VERSION 2025-12-05-FIXED-V4-FRESH-START");
+        Object.assign(Manager.prototype, {
+            ensureNodeAssets() {
+                const THREE = global.THREE;
+                if (!this.sharedNodeGeometry) {
+                this.sharedNodeGeometry = new THREE.CircleGeometry(0.08, 16);
+            }
+            if (!this.sharedNodeMaterial) {
+                this.sharedNodeMaterial = new THREE.MeshBasicMaterial({ color: 0x0f172a });
+            }
+        },
+
+        ensureStandaloneNodeGroup() {
+            const THREE = global.THREE;
+            if (!this.scene) return null;
+            if (!this.standaloneNodeGroup) {
+                this.standaloneNodeGroup = new THREE.Group();
+                this.scene.add(this.standaloneNodeGroup);
+            }
+            return this.standaloneNodeGroup;
+        },
+
+        resolveConstraintForNode(wall, nodeIndex) {
+            if (!wall || !Array.isArray(wall.boundary_conditions)) return null;
+            const match = wall.boundary_conditions.find((bc) => bc.node_index === nodeIndex);
+            if (!match || !match.constraint_type) return null;
+            const constraintType = (match.constraint_type || "").toLowerCase();
+            if (!constraintType || constraintType === "free") return null;
+            return {
+                type: constraintType,
+                direction: match.direction || null,
+            };
+        },
+
+        createSupportSymbol2D(constraintType) {
+            const THREE = global.THREE;
+            const group = new THREE.Group();
+            group.userData = { role: "support", constraintType };
+            const color = new THREE.Color(this.supportColor || 0x34d399);
+
+            const makeMesh = (geometry, options = {}) => {
+                const material = new THREE.MeshBasicMaterial({
+                    color,
+                    transparent: true,
+                    opacity: options.opacity ?? 0.9,
+                    depthTest: false,
+                    depthWrite: false,
+                });
+                const mesh = new THREE.Mesh(geometry, material);
+                mesh.renderOrder = options.renderOrder ?? 10;
+                return mesh;
+            };
+
+            const size = 0.6;
+            if (constraintType === "fixed") {
+                const stem = new THREE.PlaneGeometry(size * 0.18, size * 0.35);
+                const stemMesh = makeMesh(stem, { opacity: 0.95 });
+                stemMesh.position.set(0, -size * 0.15, 0.004);
+                group.add(stemMesh);
+
+                const base = new THREE.PlaneGeometry(size * 0.9, size * 0.35);
+                const baseMesh = makeMesh(base);
+                baseMesh.position.set(0, -size * 0.55, 0.004);
+                group.add(baseMesh);
+            } else if (constraintType === "roller") {
+                const wedgeShape = new THREE.Shape();
+                wedgeShape.moveTo(0, 0);
+                wedgeShape.lineTo(-size * 0.55, -size * 0.45);
+                wedgeShape.lineTo(size * 0.55, -size * 0.45);
+                wedgeShape.closePath();
+                const wedge = makeMesh(new THREE.ShapeGeometry(wedgeShape));
+                wedge.position.set(0, -size * 0.15, 0.004);
+                group.add(wedge);
+
+                const wheelRadius = size * 0.22;
+                const wheelOffset = size * 0.35;
+                [ -wheelOffset, wheelOffset ].forEach((offsetX) => {
+                    const wheel = makeMesh(new THREE.CircleGeometry(wheelRadius, 24), { opacity: 0.95 });
+                    wheel.position.set(offsetX, -size * 0.75, 0.006);
+                    group.add(wheel);
+                });
+            } else {
+                const triangleShape = new THREE.Shape();
+                triangleShape.moveTo(0, 0);
+                triangleShape.lineTo(-size * 0.6, -size * 0.5);
+                triangleShape.lineTo(size * 0.6, -size * 0.5);
+                triangleShape.closePath();
+                const triangle = makeMesh(new THREE.ShapeGeometry(triangleShape));
+                triangle.position.set(0, -size * 0.2, 0.004);
+                group.add(triangle);
+            }
+
+            return group;
+        },
+
+        createSupportSymbol3D(constraintType) {
+            const THREE = global.THREE;
+            const group = new THREE.Group();
+            group.userData = { role: "support", constraintType };
+            const color = new THREE.Color(this.supportColor || 0x34d399);
+
+            const makeMesh = (geometry, options = {}) => {
+                const material = new THREE.MeshStandardMaterial({
+                    color,
+                    roughness: 0.45,
+                    metalness: 0.08,
+                    transparent: !!options.transparent,
+                    opacity: options.opacity ?? 1,
+                });
+                const mesh = new THREE.Mesh(geometry, material);
+                mesh.castShadow = false;
+                mesh.receiveShadow = false;
+                return mesh;
+            };
+
+            const size = 0.7;
+            if (constraintType === "fixed") {
+                const stemHeight = size * 0.5;
+                const stem = makeMesh(new THREE.BoxGeometry(size * 0.24, stemHeight, size * 0.24));
+                stem.position.set(0, -stemHeight / 2, 0);
+                group.add(stem);
+
+                const baseHeight = size * 0.22;
+                const base = makeMesh(new THREE.BoxGeometry(size * 1.15, baseHeight, size * 0.55));
+                base.position.set(0, -(stemHeight + baseHeight / 2), 0);
+                group.add(base);
+            } else if (constraintType === "roller") {
+                const wedgeHeight = size * 0.58;
+                const wedge = makeMesh(new THREE.ConeGeometry(size * 0.58, wedgeHeight, 28));
+                wedge.position.set(0, -wedgeHeight / 2, 0);
+                group.add(wedge);
+
+                const wheelRadius = size * 0.22;
+                const wheelThickness = size * 0.18;
+                const wheelOffset = size * 0.42;
+                const wheelY = -(wedgeHeight + wheelRadius * 0.6);
+                [ -wheelOffset, wheelOffset ].forEach((offsetX) => {
+                    const wheelGeom = new THREE.CylinderGeometry(wheelRadius, wheelRadius, wheelThickness, 24);
+                    const wheel = makeMesh(wheelGeom);
+                    wheel.rotation.z = Math.PI / 2;
+                    wheel.position.set(offsetX, wheelY, 0);
+                    group.add(wheel);
+                });
+
+                const axle = makeMesh(new THREE.CylinderGeometry(size * 0.48, size * 0.48, size * 0.1, 24));
+                axle.position.set(0, wheelY, 0);
+                group.add(axle);
+            } else {
+                const coneHeight = size * 0.62;
+                const cone = makeMesh(new THREE.ConeGeometry(size * 0.46, coneHeight, 28));
+                cone.position.set(0, -coneHeight / 2, 0);
+                group.add(cone);
+
+                const baseHeight = size * 0.14;
+                const base = makeMesh(new THREE.CylinderGeometry(size * 0.44, size * 0.44, baseHeight, 32));
+                base.position.set(0, -(coneHeight + baseHeight / 2), 0);
+                group.add(base);
+            }
+
+            return group;
+        },
+
+        removeSupportSymbolForNode(node) {
+            if (!node || !node.userData) return;
+            const support = node.userData.supportSymbol;
+            if (support && support.parent) {
+                support.parent.remove(support);
+            }
+            if (support) {
+                if (typeof support.traverse === "function") {
+                    support.traverse((child) => {
+                        if (child.isMesh) {
+                            if (child.geometry) child.geometry.dispose();
+                            if (child.material && child.material.dispose) child.material.dispose();
+                        }
+                    });
+                } else if (support.isMesh) {
+                    if (support.geometry) support.geometry.dispose();
+                    if (support.material && support.material.dispose) support.material.dispose();
+                }
+            }
+            node.userData.supportSymbol = null;
+            node.userData.constraintType = null;
+        },
+
+        applySupportSymbolForNode(node, constraintType, context = "2d") {
+            if (!node || !constraintType) return;
+            this.removeSupportSymbolForNode(node);
+            const symbol = context === "3d" ? this.createSupportSymbol3D(constraintType) : this.createSupportSymbol2D(constraintType);
+            if (!symbol) return;
+            if (context === "3d") {
+                symbol.position.set(0, -0.04, 0);
+            } else {
+                symbol.position.set(0, 0, 0.002);
+            }
+            symbol.renderOrder = 9;
+            node.add(symbol);
+            node.userData.supportSymbol = symbol;
+            node.userData.constraintType = constraintType;
+        },
+
+        applyConstraintAppearanceToNode(node, constraintType) {
+            if (!node || !node.material) return;
+            const baseColor = this.nodeBaseColor || 0x0f172a;
+            const highlightColor = this.nodeHighlightColor || 0xef4444;
+            const supportColor = this.supportColor || 0x34d399;
+
+            if (!constraintType) {
+                node.material.color.set(baseColor);
+                node.material.needsUpdate = true;
+                return;
+            }
+
+            node.material.color.set(supportColor);
+            node.material.needsUpdate = true;
+        },
+
+        createNodeMarker(x, y, z = 0.001, overrides = {}) {
+            const THREE = global.THREE;
+            this.ensureNodeAssets();
+            const geometry = this.sharedNodeGeometry.clone();
+            const material = this.sharedNodeMaterial.clone();
+            if (overrides.color !== undefined && overrides.color !== null) {
+                material.color.set(overrides.color);
+            } else if (typeof this.nodeBaseColor === "number") {
+                material.color.set(this.nodeBaseColor);
+            }
+            const node = new THREE.Mesh(geometry, material);
+            node.position.set(x, y, z);
+            node.userData = Object.assign({ type: "node" }, overrides.userData || {});
+            return node;
+        },
+
+        disposeNodeContainer(group) {
+            if (!group) return;
+            group.children.slice().forEach((child) => {
+                if (typeof child.traverse === "function") {
+                    child.traverse((node) => {
+                        if (node.isMesh) {
+                            if (node.material && node.material.dispose) {
+                                node.material.dispose();
+                            }
+                            if (node.geometry) {
+                                node.geometry.dispose();
+                            }
+                        }
+                    });
+                } else {
+                    if (child.isMesh && child.material && child.material.dispose) {
+                        child.material.dispose();
+                    }
+                    if (child.geometry) {
+                        child.geometry.dispose();
+                    }
+                }
+                group.remove(child);
+            });
+        },
+
+        // --- Snapping helpers ---
+        snapPointToGrid(pt) {
+            const THREE = global.THREE;
+            if (!pt) return pt;
+            const step = this.gridStep || 1;
+            const sx = Math.round(pt.x / step) * step;
+            const sy = Math.round(pt.y / step) * step;
+            return new THREE.Vector3(sx, sy, 0);
+        },
+
+        getExistingNodePositions() {
+            const nodes = [];
+            if (this.plateOverlays) {
+                Object.values(this.plateOverlays).forEach((group) => {
+                    group.children.forEach((child) => {
+                        if (child.userData && child.userData.type === "node") {
+                            nodes.push(child.position.clone());
+                        }
+                    });
+                });
+            }
+            if (this.polygonOverlays) {
+                Object.values(this.polygonOverlays).forEach((group) => {
+                    group.children.forEach((child) => {
+                        if (child.userData && (child.userData.type === "node" || child.userData.type === "polygon-vertex")) {
+                            nodes.push(child.position.clone());
+                        }
+                    });
+                });
+            }
+            if (this.standaloneNodeGroup) {
+                this.standaloneNodeGroup.children.forEach((child) => {
+                    if (child.userData && child.userData.type === "node") {
+                        nodes.push(child.position.clone());
+                    }
+                });
+            }
+            return nodes;
+        },
+
+        snapPointToExistingNodes(pt, tolerance = 0.15) {
+            const nodes = this.getExistingNodePositions();
+            let best = null;
+            let bestDist = Infinity;
+            for (const node of nodes) {
+                const dist = Math.hypot(pt.x - node.x, pt.y - node.y);
+                if (dist < bestDist && dist <= tolerance) {
+                    best = node;
+                    bestDist = dist;
+                }
+            }
+            return best ? new THREE.Vector3(best.x, best.y, 0) : pt;
+        },
+
+        snapPoint(pt) {
+            if (!pt) return pt;
+            const grid = this.snapPointToGrid(pt);
+            return this.snapPointToExistingNodes(grid);
+        },
+
+        projectPointToClosestPlateEdge(rawPoint, tolerance = 0.45) {
+            const THREE = global.THREE;
+            if (!rawPoint || !this.plateOverlays) return null;
+            let best = null;
+            let bestDist = tolerance;
+            Object.entries(this.plateOverlays).forEach(([plateId, group]) => {
+                if (!group) return;
+                const rect = this.getRectFromOverlay(group);
+                if (!rect) return;
+                const edges = [
+                    { edge: "bottom", axis: "y", value: rect.minY, min: rect.minX, max: rect.maxX },
+                    { edge: "top", axis: "y", value: rect.maxY, min: rect.minX, max: rect.maxX },
+                    { edge: "left", axis: "x", value: rect.minX, min: rect.minY, max: rect.maxY },
+                    { edge: "right", axis: "x", value: rect.maxX, min: rect.minY, max: rect.maxY },
+                ];
+                edges.forEach((entry) => {
+                    let candidate = null;
+                    if (entry.axis === "y") {
+                        if (rawPoint.x >= entry.min - tolerance && rawPoint.x <= entry.max + tolerance) {
+                            const clampedX = THREE.MathUtils.clamp(rawPoint.x, entry.min, entry.max);
+                            candidate = new THREE.Vector3(clampedX, entry.value, 0);
+                        }
+                    } else if (entry.axis === "x") {
+                        if (rawPoint.y >= entry.min - tolerance && rawPoint.y <= entry.max + tolerance) {
+                            const clampedY = THREE.MathUtils.clamp(rawPoint.y, entry.min, entry.max);
+                            candidate = new THREE.Vector3(entry.value, clampedY, 0);
+                        }
+                    }
+                    if (!candidate) return;
+                    const dist = candidate.distanceTo(rawPoint);
+                    if (dist <= bestDist) {
+                        const span = entry.max - entry.min || 1;
+                        const param = entry.axis === "y"
+                            ? (candidate.x - entry.min) / span
+                            : (candidate.y - entry.min) / span;
+                        best = {
+                            position: candidate,
+                            plateId,
+                            edge: entry.edge,
+                            distance: dist,
+                            normalized: THREE.MathUtils.clamp(param, 0, 1),
+                        };
+                        bestDist = dist;
+                    }
+                });
+            });
+            return best;
+        },
+
+        addNodeToPlate(rawPoint) {
+            // Add a node anywhere on a plate surface (for meshed plates)
+            console.log('[addNodeToPlate] called with rawPoint:', rawPoint);
+            if (!rawPoint || !this.scene) {
+                console.log('[addNodeToPlate] early return - no rawPoint or scene');
+                return false;
+            }
+
+            // Find which plate we're clicking on
+            const plateId = this.findPlateAtPoint(rawPoint);
+            if (!plateId) {
+                console.log('[addNodeToPlate] no plate found at point');
+                return false;
+            }
+
+            const overlayGroup = this.plateOverlays?.[plateId] || null;
+            const rect = overlayGroup ? this.getRectFromOverlay(overlayGroup) : null;
+            if (!rect) {
+                console.log('[addNodeToPlate] no rect for plate');
+                return false;
+            }
+
+            // Snap point to grid
+            const step = this.gridStep || 0.1;
+            const candidate = new THREE.Vector3(
+                Math.round(rawPoint.x / step) * step,
+                Math.round(rawPoint.y / step) * step,
+                0.003
+            );
+
+            // Ensure point is within plate bounds
+            candidate.x = THREE.MathUtils.clamp(candidate.x, rect.minX, rect.maxX);
+            candidate.y = THREE.MathUtils.clamp(candidate.y, rect.minY, rect.maxY);
+
+            // Check for duplicates
+            const existingNodes = this.collectNodeMeshes();
+            if (existingNodes.some((node) => node.position.distanceTo(candidate) <= 0.05)) {
+                console.log('[addNodeToPlate] node too close to existing node');
+                return false;
+            }
+
+            const layer = this.ensureStandaloneNodeGroup();
+            const nodeId = `node_${Date.now()}`;
+            
+            // Create node marker
+            const node = this.createNodeMarker(candidate.x, candidate.y, candidate.z, {
+                userData: {
+                    scope: "surface",
+                    id: nodeId,
+                    plateId: plateId,
+                    gridX: candidate.x,
+                    gridY: candidate.y,
+                    constraintKey: `${plateId}:surface:${nodeId}`,
+                },
+                color: 0x0f172a,
+            });
+            layer.add(node);
+
+            dispatchViewportEvent("nodeAdded2D", {
+                position: [candidate.x, candidate.y, 0],
+                plateId: plateId,
+                grid: [candidate.x, candidate.y],
+            });
+
+            console.log('[addNodeToPlate] successfully added node at', candidate);
+            return true;
+        },
+
+        findPlateAtPoint(point) {
+            // Find which plate contains the given point
+            if (!point || !this.plateOverlays) return null;
+            
+            for (const [plateId, group] of Object.entries(this.plateOverlays)) {
+                if (!group) continue;
+                const rect = this.getRectFromOverlay(group);
+                if (!rect) continue;
+                
+                if (point.x >= rect.minX && point.x <= rect.maxX &&
+                    point.y >= rect.minY && point.y <= rect.maxY) {
+                    return plateId;
+                }
+            }
+            return null;
+        },
+
+        addStandaloneNode(rawPoint) {
+            console.log('[addStandaloneNode] called with rawPoint:', rawPoint);
+            if (!rawPoint || !this.scene) return false;
+
+            // 1. Try to find a plate under the point (Surface placement)
+            const plateId = this.findPlateAtPoint(rawPoint);
+            
+            // 2. If we have a plate, allow surface placement
+            if (plateId) {
+                 console.log('[addStandaloneNode] Using surface placement for plate:', plateId);
+                 return this.addNodeToPlate(rawPoint);
+            }
+
+            // 3. Fallback to Edge placement (Original behavior)
+            const projected = this.projectPointToClosestPlateEdge(rawPoint, 0.4);
+            console.log('[addStandaloneNode] projected:', projected);
+            if (!projected || !projected.plateId) {
+                console.log('[addStandaloneNode] early return - no projected plate found');
+                return false;
+            }
+
+            const layer = this.ensureStandaloneNodeGroup();
+            const overlayGroup = this.plateOverlays?.[projected.plateId] || null;
+            const rect = overlayGroup ? this.getRectFromOverlay(overlayGroup) : null;
+            const candidate = projected.position.clone();
+            const step = this.gridStep || 1;
+
+            if (rect) {
+                const horizontal = projected.edge === "top" || projected.edge === "bottom";
+                if (horizontal) {
+                    const snappedX = Math.round(candidate.x / step) * step;
+                    candidate.x = THREE.MathUtils.clamp(snappedX, rect.minX, rect.maxX);
+                    candidate.y = projected.edge === "top" ? rect.maxY : rect.minY;
+                } else {
+                    const snappedY = Math.round(candidate.y / step) * step;
+                    candidate.y = THREE.MathUtils.clamp(snappedY, rect.minY, rect.maxY);
+                    candidate.x = projected.edge === "right" ? rect.maxX : rect.minX;
+                }
+            } else {
+                const snapped = this.snapPointToGrid(candidate);
+                candidate.copy(snapped);
+            }
+
+            let normalized = projected.normalized;
+            if (rect) {
+                if (projected.edge === "top" || projected.edge === "bottom") {
+                    const span = rect.maxX - rect.minX || 1;
+                    normalized = THREE.MathUtils.clamp((candidate.x - rect.minX) / span, 0, 1);
+                } else {
+                    const span = rect.maxY - rect.minY || 1;
+                    normalized = THREE.MathUtils.clamp((candidate.y - rect.minY) / span, 0, 1);
+                }
+            }
+
+            if (!candidate || Number.isNaN(candidate.x) || Number.isNaN(candidate.y)) {
+                return false;
+            }
+            const existingNodes = this.collectNodeMeshes();
+            if (
+                existingNodes.some((node) =>
+                    node.position.distanceTo(candidate) <= 0.05
+                )
+            ) {
+                return false;
+            }
+            const nodeId = `node_${Date.now()}`;
+            const node = this.createNodeMarker(candidate.x, candidate.y, 0.003, {
+                userData: {
+                    scope: "edge",
+                    id: nodeId,
+                    plateId: projected.plateId,
+                    edge: projected.edge,
+                    normalized,
+                    gridX: candidate.x,
+                    gridY: candidate.y,
+                    constraintKey: `${projected.plateId}:${projected.edge}:${normalized.toFixed(4)}`,
+                },
+                color: 0x0f172a,
+            });
+            layer.add(node);
+
+            dispatchViewportEvent("nodeAdded2D", {
+                position: [candidate.x, candidate.y, 0],
+                plateId: projected.plateId,
+                edge: projected.edge,
+                t: normalized,
+                grid: [candidate.x, candidate.y],
+            });
+            return true;
+        },
+
+        setPlateGroupAppearance(group, options = {}) {
+            if (!group) return;
+            const highlighted = options.highlighted || false;
+            const invalid = options.invalid || false;
+
+            const fillColor = invalid
+                ? 0xff9800
+                : highlighted
+                ? this.highlightPlateColor
+                : this.basePlateColor;
+            
+            // When stress plot is active, make plate nearly transparent so stress colors show through
+            let opacity = highlighted ? this.highlightPlateOpacity : this.inactivePlateOpacity;
+            if (this.stressPlotActive) {
+                opacity = 0.05; // Almost transparent to show stress mesh overlay
+            }
+
+            group.children.forEach((child) => {
+                if (child.userData && child.userData.role === "fill" && child.material) {
+                    child.material.color.set(fillColor);
+                    if (!invalid) {
+                        child.material.opacity = opacity;
+                    }
+                    child.material.needsUpdate = true;
+                }
+            });
+
+            this.setPlateNodesAppearance(group, { highlighted });
+        },
+
+        setPlateNodesAppearance(group, options = {}) {
+            if (!group) return;
+            const highlighted = options.highlighted || false;
+            const highlightColor = options.color || this.nodeHighlightColor || 0xef4444;
+            const baseColor = this.nodeBaseColor || 0x0f172a;
+            const supportColor = this.supportColor || 0x34d399;
+            const supportHighlightColor = new THREE.Color(supportColor).clone().offsetHSL(0, 0, 0.12);
+            const targetColor = highlighted ? highlightColor : baseColor;
+            const scale = highlighted ? 1.15 : 1.0;
+
+            group.children.forEach((child) => {
+                if (child.userData && child.userData.type === "node" && child.material) {
+                    const constraintType = child.userData.constraintType;
+                    if (constraintType) {
+                        const color = highlighted ? supportHighlightColor : new THREE.Color(supportColor);
+                        child.material.color.set(color);
+                    } else {
+                        child.material.color.set(targetColor);
+                    }
+                    child.material.needsUpdate = true;
+                    if (child.scale) {
+                        child.scale.set(scale, scale, scale);
+                    }
+                }
+            });
+        },
+
+        setElementLabelsVisible(visible) {
+            this.showElementLabels = !!visible;
+            this.refreshElementLabelContent();
+            this.updateElementLabelVisibility();
+        },
+
+        updateElementLabelVisibility() {
+            const visible = !!this.showElementLabels;
+
+            const applyToOverlay = (overlay) => {
+                if (!overlay || !overlay.userData) return;
+                const { labelGroup, elementLabels } = overlay.userData;
+                if (labelGroup) {
+                    labelGroup.visible = visible;
+                }
+                if (Array.isArray(elementLabels)) {
+                    elementLabels.forEach((entry) => {
+                        if (entry && entry.sprite) {
+                            entry.sprite.visible = visible;
+                        }
+                    });
+                }
+            };
+
+            Object.values(this.plateOverlays || {}).forEach((group) => {
+                if (!group || !group.userData) return;
+                applyToOverlay(group.userData.meshOverlay);
+            });
+            Object.values(this.plateMeshes || {}).forEach((entry) => {
+                applyToOverlay(entry?.meshOverlay);
+            });
+        },
+
+        refreshElementLabelContent() {
+            Object.values(this.plateOverlays || {}).forEach((group) => {
+                if (!group || !group.userData) return;
+                const overlay = group.userData.meshOverlay;
+                if (overlay) {
+                    this.refreshElementLabelContentForOverlay(overlay);
+                }
+            });
+            Object.values(this.plateMeshes || {}).forEach((entry) => {
+                if (entry?.meshOverlay) {
+                    this.refreshElementLabelContentForOverlay(entry.meshOverlay);
+                }
+            });
+        },
+
+        refreshElementLabelContentForOverlay(overlay) {
+            if (!overlay || !overlay.userData) return;
+            const entries = overlay.userData.elementLabels;
+            if (!Array.isArray(entries) || entries.length === 0) {
+                if (overlay.userData.labelGroup) {
+                    overlay.userData.labelGroup.visible = !!this.showElementLabels;
+                }
+                return;
+            }
+
+            entries.forEach((entry) => {
+                if (!entry || !entry.sprite) return;
+                const indexLabel = entry.elementIndex + 1;
+                const text = `#${indexLabel}`;
+                if (entry.sprite.userData?.baseText !== text) {
+                    updateElementLabelSprite(entry.sprite, text);
+                }
+                entry.sprite.visible = !!this.showElementLabels;
+            });
+
+            if (overlay.userData.labelGroup) {
+                overlay.userData.labelGroup.visible = !!this.showElementLabels;
+            }
+        },
+
+        ensurePlateMeshGroup() {
+            if (!this.scene) return null;
+            if (!this.plateMeshGroup) {
+                this.plateMeshGroup = new THREE.Group();
+                this.plateMeshGroup.visible = !this.is2D;
+                this.scene.add(this.plateMeshGroup);
+            }
+            if (!this.plateMeshes) {
+                this.plateMeshes = {};
+            }
+            return this.plateMeshGroup;
+        },
+
+        disposeMeshOverlay(group) {
+            if (!group || !group.userData || !group.userData.meshOverlay) {
+                return;
+            }
+            const overlay = group.userData.meshOverlay;
+            overlay.children.slice().forEach((child) => {
+                if (child.userData && child.userData.isElementLabelSprite) {
+                    disposeElementLabelSprite(child);
+                }
+                if (child.geometry && typeof child.geometry.dispose === "function") {
+                    child.geometry.dispose();
+                }
+                if (child.material && typeof child.material.dispose === "function") {
+                    child.material.dispose();
+                }
+                overlay.remove(child);
+            });
+            if (overlay.userData && overlay.userData.meshMaterial && typeof overlay.userData.meshMaterial.dispose === "function") {
+                overlay.userData.meshMaterial.dispose();
+            }
+            if (overlay.userData && Array.isArray(overlay.userData.elementLabels)) {
+                overlay.userData.elementLabels = [];
+            }
+            if (overlay.parent) {
+                overlay.parent.remove(overlay);
+            }
+            delete group.userData.meshOverlay;
+        },
+
+        renderNetgenMeshOverlay(wall, group, meshData) {
+            if (!group || !meshData) return;
+
+            console.log('Rendering Netgen mesh (CLEAN):', meshData.nodes.length, 'nodes,', meshData.elements.length, 'elements');
+
+            const overlay = new THREE.Group();
+            overlay.name = "netgen-mesh-overlay";
+            overlay.renderOrder = 8;
+
+            // Get plate geometry
+            const geometry = wall.geometry || {};
+            const length = Number(wall.length ?? geometry.length ?? 1);
+            const height = Number(wall.height ?? geometry.height ?? 1);
+
+            // 1. Create Node Markers (+)
+            const nodeMap = new Map();
+            const nodeMarkerPositions = [];
+            const markerSize = 0.08;
+
+            meshData.nodes.forEach((node) => {
+                const x = node.x - length / 2;
+                const y = node.y - height / 2;
+                const z = 0.002; 
+                nodeMap.set(node.id, [x, y, z]);
+
+                // Horizontal line of +
+                nodeMarkerPositions.push(x - markerSize, y, z, x + markerSize, y, z);
+                // Vertical line of +
+                nodeMarkerPositions.push(x, y - markerSize, z, x, y + markerSize, z);
+            });
+
+            const markerGeometry = new THREE.BufferGeometry();
+            markerGeometry.setAttribute('position', new THREE.Float32BufferAttribute(nodeMarkerPositions, 3));
+            const markerMaterial = new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.6 });
+            const markerMesh = new THREE.LineSegments(markerGeometry, markerMaterial);
+            markerMesh.userData = { isNodeMarker: true };
+            overlay.add(markerMesh);
+
+            // 2. Create Mesh Surface & Edges
+            const positions = [];
+            const colors = [];
+            const indices = [];
+            const elementRanges = [];
+            const edgeSegments = new Set();
+
+            let vertexOffset = 0;
+            const feaColor = new THREE.Color(0xa0b0c0);
+
+            meshData.elements.forEach((element, elementIdx) => {
+                if (!element.node_ids || element.node_ids.length < 3) return;
+                const coords = element.node_ids.map(id => nodeMap.get(id)).filter(Boolean);
+                if (coords.length < 3) return;
+
+                const startVertex = vertexOffset;
+                
+                // Add vertices for this element
+                coords.forEach(c => {
+                    positions.push(c[0], c[1], c[2]);
+                    colors.push(feaColor.r, feaColor.g, feaColor.b);
+                });
+
+                // Triangulate
+                if (coords.length === 3) {
+                    indices.push(startVertex, startVertex + 1, startVertex + 2);
+                    vertexOffset += 3;
+                    elementRanges.push({ start: startVertex, count: 3, elementIndex: elementIdx });
+                } else if (coords.length === 4) {
+                    indices.push(startVertex, startVertex + 1, startVertex + 2);
+                    indices.push(startVertex, startVertex + 2, startVertex + 3);
+                    vertexOffset += 4;
+                    elementRanges.push({ start: startVertex, count: 4, elementIndex: elementIdx });
+                } else {
+                    // Fan
+                    for (let i = 1; i < coords.length - 1; i++) {
+                        indices.push(startVertex, startVertex + i, startVertex + i + 1);
+                    }
+                    vertexOffset += coords.length;
+                    elementRanges.push({ start: startVertex, count: coords.length, elementIndex: elementIdx });
+                }
+
+                // Edges
+                for (let i = 0; i < element.node_ids.length; i++) {
+                    const a = element.node_ids[i];
+                    const b = element.node_ids[(i + 1) % element.node_ids.length];
+                    const key = a < b ? `${a}-${b}` : `${b}-${a}`;
+                    edgeSegments.add(key);
+                }
+            });
+
+            const surfaceGeometry = new THREE.BufferGeometry();
+            surfaceGeometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            surfaceGeometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+            surfaceGeometry.setIndex(indices);
+            surfaceGeometry.computeVertexNormals();
+
+            const surfaceMaterial = new THREE.MeshBasicMaterial({
+                vertexColors: true,
+                transparent: true,
+                opacity: 0.75,
+                side: THREE.DoubleSide,
+            });
+
+            const surfaceMesh = new THREE.Mesh(surfaceGeometry, surfaceMaterial);
+            surfaceMesh.userData = {
+                isNetgenMeshSurface: true,
+                plateId: wall.id,
+                elementRanges: elementRanges // Critical for raycasting
+            };
+            overlay.add(surfaceMesh);
+
+            // Edges
+            const edgePositions = [];
+            edgeSegments.forEach(key => {
+                const [a, b] = key.split('-').map(Number);
+                const pA = nodeMap.get(a);
+                const pB = nodeMap.get(b);
+                if (pA && pB) edgePositions.push(...pA, ...pB);
+            });
+            const edgeGeometry = new THREE.BufferGeometry();
+            edgeGeometry.setAttribute('position', new THREE.Float32BufferAttribute(edgePositions, 3));
+            const edgeMaterial = new THREE.LineBasicMaterial({ color: 0x242424, transparent: true, opacity: 0.5 });
+            overlay.add(new THREE.LineSegments(edgeGeometry, edgeMaterial));
+
+            // Position overlay
+            const centerX = Number(Array.isArray(wall.position) ? wall.position[0] : 0) || 0;
+            const centerY = Number(Array.isArray(wall.position) ? wall.position[1] : 0) || 0;
+            overlay.position.set(centerX, centerY, 0.004);
+            
+            const showOverlay2D = this.stressPlotActive || (!!this.is2D && !!this.meshOverlayEnabled);
+            overlay.visible = showOverlay2D;
+            
+            group.add(overlay);
+            group.userData.meshOverlay = overlay;
+        },
+
+        applyMeshOverlayToGroup(wall, group) {
+            if (!group) return;
+            this.disposeMeshOverlay(group);
+            
+            // Allow mesh overlay creation if stress plot is active OR if mesh overlay is enabled
+            const shouldCreateMesh = this.meshOverlayEnabled || this.stressPlotActive;
+            if (!shouldCreateMesh) return;
+
+            console.log('[applyMeshOverlayToGroup] wall:', wall.id, 'checking for mesh data');
+            
+            // Check if we have Netgen mesh data to render
+            const plateMesh = this.netgenPlateMeshes?.[wall.id];
+            console.log('[applyMeshOverlayToGroup] plate-specific mesh:', plateMesh);
+            
+            if (plateMesh && plateMesh.nodes && plateMesh.elements) {
+                console.log('[applyMeshOverlayToGroup] Using plate-specific Netgen mesh for', wall.id);
+                this.renderNetgenMeshOverlay(wall, group, plateMesh);
+                return;
+            }
+
+            if (this.netgenMeshData && this.netgenMeshData.nodes && this.netgenMeshData.elements) {
+                console.log('[applyMeshOverlayToGroup] Using global Netgen mesh');
+                this.renderNetgenMeshOverlay(wall, group, this.netgenMeshData);
+                return;
+            }
+
+            console.log('[applyMeshOverlayToGroup] No Netgen mesh data available; skipping overlay');
+        },
+
+        disposePlateMeshOverlay(entry) {
+            if (!entry) return;
+            
+            // Dispose corner markers
+            if (entry.cornerMarkers) {
+                entry.cornerMarkers.forEach(marker => {
+                    if (entry.group) entry.group.remove(marker);
+                    marker.geometry?.dispose();
+                    marker.material?.dispose();
+                });
+                entry.cornerMarkers = [];
+            }
+            
+            // Dispose mesh overlay
+            if (entry.meshOverlay) {
+                const overlay = entry.meshOverlay;
+                overlay.children.slice().forEach((child) => {
+                    if (child.userData && child.userData.isElementLabelSprite) {
+                        disposeElementLabelSprite(child);
+                    }
+                    if (child.geometry && typeof child.geometry.dispose === "function") {
+                        child.geometry.dispose();
+                    }
+                    if (child.material && typeof child.material.dispose === "function") {
+                        child.material.dispose();
+                    }
+                    overlay.remove(child);
+                });
+                if (overlay.userData && overlay.userData.meshMaterial && typeof overlay.userData.meshMaterial.dispose === "function") {
+                    overlay.userData.meshMaterial.dispose();
+                }
+                if (overlay.userData) {
+                    overlay.userData.elementLabels = [];
+                }
+                if (overlay.parent) {
+                    overlay.parent.remove(overlay);
+                }
+                entry.meshOverlay = null;
+            }
+        },
+
+        applyMeshOverlayToPlateEntry(wall, entry) {
+            console.log('[applyMeshOverlayToPlateEntry] Rendering NEW mesh overlay for wall:', wall.id);
+            if (!entry) return;
+            this.disposePlateMeshOverlay(entry);
+            
+            // Allow mesh overlay creation if stress plot is active OR if mesh overlay is enabled
+            const shouldCreateMesh = this.meshOverlayEnabled || this.stressPlotActive;
+            if (!shouldCreateMesh) return;
+
+            const geometry = wall.geometry || {};
+            const length = Number(wall.length ?? geometry.length ?? 0);
+            const height = Number(wall.height ?? geometry.height ?? 0);
+            if (!(length > 0) || !(height > 0)) return;
+
+            const plateMesh = this.netgenPlateMeshes?.[wall.id];
+            if (plateMesh && plateMesh.nodes && plateMesh.nodes.length && plateMesh.elements && plateMesh.elements.length) {
+                const overlay = new THREE.Group();
+                overlay.name = "plate-mesh-overlay-3d";
+                overlay.renderOrder = 50;
+
+                const nodeMap = new Map();
+                
+                // Create individual + markers for each node using Lines
+                plateMesh.nodes.forEach((node) => {
+                    const x = node.x - length / 2;
+                    const y = node.y - height / 2;
+                    const z = 0.02; // Above mesh
+                    nodeMap.set(node.id, [x, y, 0.001]); // Store base position for mesh
+                    
+                    // Create + symbol using two line segments
+                    const size = 0.08;
+                    const positions = new Float32Array([
+                        x - size, y, z,
+                        x + size, y, z,
+                        x, y - size, z,
+                        x, y + size, z
+                    ]);
+                    
+                    const geometry = new THREE.BufferGeometry();
+                    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+                    
+                    const material = new THREE.LineBasicMaterial({ 
+                        color: 0x00ff00,
+                        linewidth: 3,
+                        depthTest: false
+                    });
+                    
+                    const cross = new THREE.LineSegments(geometry, material);
+                    cross.userData = {
+                        type: 'node',
+                        nodeId: node.id,
+                        plateId: wall.id,
+                        isMeshNode: true
+                    };
+                    cross.renderOrder = 100;
+                    overlay.add(cross);
+                });
+
+                const lineMaterial = new THREE.LineBasicMaterial({
+                    color: 0x000000,
+                    linewidth: 2,
+                    transparent: false,
+                    depthTest: true,
+                    depthWrite: true,
+                });
+
+                // Create INDIVIDUAL mesh for each element so they can be selected
+                const feaColor = new THREE.Color(0x4a90e2);
+                const highlightColor = new THREE.Color(0xff6b00);
+
+                plateMesh.elements.forEach((element, elementIdx) => {
+                    if (!element.node_ids || element.node_ids.length < 3) return;
+
+                    const coords = element.node_ids.map((nodeId) => nodeMap.get(nodeId)).filter(Boolean);
+                    if (coords.length < 3) return;
+
+                    // Create separate geometry for this element
+                    const elementPositions = [];
+                    const elementColors = [];
+                    
+                    coords.forEach((coord) => {
+                        elementPositions.push(coord[0], coord[1], coord[2]);
+                        elementColors.push(feaColor.r, feaColor.g, feaColor.b);
+                    });
+
+                    const elementGeometry = new THREE.BufferGeometry();
+                    elementGeometry.setAttribute('position', new THREE.Float32BufferAttribute(elementPositions, 3));
+                    elementGeometry.setAttribute('color', new THREE.Float32BufferAttribute(elementColors, 3));
+                    
+                    // Create indices for triangulation
+                    const elementIndices = [];
+                    if (coords.length === 3) {
+                        elementIndices.push(0, 1, 2);
+                    } else if (coords.length === 4) {
+                        elementIndices.push(0, 1, 2, 0, 2, 3);
+                    } else {
+                        for (let i = 1; i < coords.length - 1; i++) {
+                            elementIndices.push(0, i, i + 1);
+                        }
+                    }
+                    elementGeometry.setIndex(elementIndices);
+                    elementGeometry.computeVertexNormals();
+
+                    const elementMaterial = new THREE.MeshBasicMaterial({
+                        color: feaColor,
+                        side: THREE.DoubleSide,
+                        transparent: false,
+                        depthTest: true,
+                        depthWrite: true,
+                    });
+
+                    const elementMesh = new THREE.Mesh(elementGeometry, elementMaterial);
+                    elementMesh.userData = {
+                        isNetgenElement: true,
+                        elementIndex: elementIdx,
+                        plateId: wall.id,
+                        nodeIds: element.node_ids
+                    };
+                    elementMesh.renderOrder = 10 + elementIdx * 0.001;
+                    overlay.add(elementMesh);
+
+                    // Create wireframe for this element
+                    const edgePositions = [];
+                    for (let i = 0; i < coords.length; i++) {
+                        const curr = coords[i];
+                        const next = coords[(i + 1) % coords.length];
+                        edgePositions.push(curr[0], curr[1], curr[2]);
+                        edgePositions.push(next[0], next[1], next[2]);
+                    }
+                    
+                    const edgeGeometry = new THREE.BufferGeometry();
+                    edgeGeometry.setAttribute('position', new THREE.Float32BufferAttribute(edgePositions, 3));
+                    const edgeLine = new THREE.LineSegments(edgeGeometry, lineMaterial);
+                    edgeLine.renderOrder = 11 + elementIdx * 0.001;
+                    overlay.add(edgeLine);
+                });
+
+                overlay.position.set(0, 0, 0.001);
+                const showOverlay3D = this.stressPlotActive || (!this.is2D && !!this.meshOverlayEnabled);
+                overlay.visible = showOverlay3D;
+
+                entry.group.add(overlay);
+                entry.meshOverlay = overlay;
+                return;
+            }
+
+            console.log('[applyMeshOverlayToPlateEntry] No Netgen mesh data available; skipping overlay');
+                },
+
+        refreshAllMeshOverlays() {
+            if (!this.plateOverlays && !this.plateMeshes) return;
+            const walls = Array.isArray(this.latestWallData) ? this.latestWallData : [];
+            const stressActive = !!this.stressPlotActive;
+            
+            if (this.plateOverlays) {
+                Object.entries(this.plateOverlays).forEach(([id, group]) => {
+                    const wall = walls.find((w) => w.id === id);
+                    if (wall) {
+                        this.applyMeshOverlayToGroup(wall, group);
+                        if (group.userData && group.userData.meshOverlay) {
+                            const shouldShow = stressActive || (!!this.is2D && !!this.meshOverlayEnabled);
+                            group.userData.meshOverlay.visible = shouldShow;
+                        }
+                    } else {
+                        this.disposeMeshOverlay(group);
+                    }
+                });
+            }
+            if (this.plateMeshes) {
+                Object.entries(this.plateMeshes).forEach(([id, entry]) => {
+                    const wall = walls.find((w) => w.id === id);
+                    if (wall) {
+                        this.applyMeshOverlayToPlateEntry(wall, entry);
+                        // Update visibility based on current view mode
+                        if (entry.meshOverlay) {
+                            const shouldShow = stressActive || (!this.is2D && !!this.meshOverlayEnabled);
+                            entry.meshOverlay.visible = shouldShow;
+                        }
+                    } else {
+                        this.disposePlateMeshOverlay(entry);
+                    }
+                });
+            }
+
+            if (this.polygonOverlays) {
+                Object.entries(this.polygonOverlays).forEach(([id, group]) => {
+                    const polygon = { id: id };
+                    this.applyMeshOverlayToPolygonGroup(polygon, group);
+                    if (group.userData && group.userData.meshOverlay) {
+                        const shouldShow = stressActive || (!!this.is2D && !!this.meshOverlayEnabled);
+                        group.userData.meshOverlay.visible = shouldShow;
+                    }
+                });
+            }
+
+            const hasMeshData = this.netgenPlateMeshes && Object.keys(this.netgenPlateMeshes).length > 0;
+            if (hasMeshData) {
+                this.visualizeAllMeshNodes();
+            }
+        },
+
+
+
+        setMeshOverlayEnabled(enabled, meshSize) {
+            this.meshOverlayEnabled = !!enabled;
+            let size = meshSize;
+            if (typeof size === "string") {
+                const parsed = parseFloat(size);
+                if (Number.isFinite(parsed)) {
+                    size = parsed;
+                }
+            }
+            if (typeof size === "number" && Number.isFinite(size) && size > 0) {
+                this.meshOverlaySize = size;
+            }
+            this.refreshAllMeshOverlays();
+        },
+
+        updateNetgenMesh(meshData) {
+            if (!meshData || !meshData.nodes || !meshData.elements) {
+                console.warn('Invalid mesh data received');
+                this.netgenMeshData = null;
+                this.netgenPlateMeshes = {};
+                return;
+            }
+
+            console.log('=== NETGEN MESH UPDATE ===');
+            console.log('Global mesh - nodes:', meshData.nodes.length, 'elements:', meshData.elements.length);
+            console.log('Plate meshes:', meshData.plate_meshes);
+
+            // Store mesh data for later use
+            this.netgenMeshData = meshData;
+            this.netgenPlateMeshes = {};
+            this.netgenPolygonMeshes = {};
+            this.plateMeshCorners = {};
+            this.nodeIdToGlobalIndex = null;
+            
+            if (Array.isArray(meshData.plate_meshes)) {
+                console.log('Processing', meshData.plate_meshes.length, 'plate meshes');
+                meshData.plate_meshes.forEach((plateMesh) => {
+                    if (plateMesh && plateMesh.plate_id) {
+                        console.log('Storing mesh for plate:', plateMesh.plate_id, 
+                            '- nodes:', plateMesh.nodes?.length, 
+                            'elements:', plateMesh.elements?.length,
+                            'corner_nodes:', plateMesh.corner_nodes);
+                        this.netgenPlateMeshes[plateMesh.plate_id] = plateMesh;
+                        
+                        // Store corner nodes mapping if available
+                        if (plateMesh.corner_nodes) {
+                            this.plateMeshCorners[plateMesh.plate_id] = plateMesh.corner_nodes;
+                        }
+                    }
+                });
+                console.log('Stored plate meshes:', Object.keys(this.netgenPlateMeshes));
+                console.log('Corner mappings:', this.plateMeshCorners);
+            }
+
+            if (Array.isArray(meshData.polygon_meshes)) {
+                console.log('Processing', meshData.polygon_meshes.length, 'polygon meshes');
+                meshData.polygon_meshes.forEach((polyMesh) => {
+                    if (polyMesh && polyMesh.polygon_id) {
+                        this.netgenPolygonMeshes[polyMesh.polygon_id] = polyMesh;
+                    }
+                });
+            }
+            
+            // Enable mesh overlay and refresh all plates to show the triangular mesh
+            this.meshOverlayEnabled = true;
+            console.log('Refreshing all mesh overlays...');
+            this.refreshAllMeshOverlays();
+            
+            // Visualize corner nodes for boundary condition application
+            this.visualizeMeshCornerNodes();
+            
+            console.log('=========================');
+        },
+
+        visualizeAllMeshNodes() {
+            // DISABLED - Node visualization is now handled by renderNetgenMeshOverlay and applyMeshOverlayToPlateEntry
+            console.log('[visualizeAllMeshNodes] DISABLED - using integrated node rendering');
+        },
+
+        visualizeMeshCornerNodes() {
+            // Create visual markers at corner nodes to show where boundary conditions can be applied
+            const walls = Array.isArray(this.latestWallData) ? this.latestWallData : [];
+            
+            walls.forEach(wall => {
+                const entry = this.plateMeshes?.[wall.id];
+                if (!entry || !entry.group) return;
+                
+                const plateMesh = this.netgenPlateMeshes?.[wall.id];
+                const cornerMapping = this.plateMeshCorners?.[wall.id];
+                if (!plateMesh || !cornerMapping) return;
+                
+                // Remove existing corner markers
+                if (entry.cornerMarkers) {
+                    entry.cornerMarkers.forEach(marker => {
+                        entry.group.remove(marker);
+                        marker.geometry?.dispose();
+                        marker.material?.dispose();
+                    });
+                    entry.cornerMarkers = [];
+                }
+                
+                const geometry = wall.geometry || {};
+                const length = Number(wall.length ?? geometry.length ?? 0);
+                const height = Number(wall.height ?? geometry.height ?? 0);
+                
+                // Create markers for each corner node
+                entry.cornerMarkers = [];
+                Object.entries(cornerMapping).forEach(([cornerIdx, globalNodeId]) => {
+                    // Find the node in the plate mesh
+                    const node = plateMesh.nodes.find(n => n.id === globalNodeId);
+                    if (!node) return;
+                    
+                    // Convert from Python local coordinates (0,0 to length,height) 
+                    // to Three.js centered coordinates (-length/2 to +length/2)
+                    const x = node.x - length / 2;
+                    const y = node.y - height / 2;
+                    const z = 0.02; // Slightly above the plate
+                    
+                    // Create a sphere marker
+                    const markerGeometry = new THREE.SphereGeometry(0.08, 16, 16);
+                    const markerMaterial = new THREE.MeshBasicMaterial({
+                        color: 0x00ff00,  // Green for corner nodes
+                        transparent: true,
+                        opacity: 0.8,
+                        depthTest: false,
+                    });
+                    const marker = new THREE.Mesh(markerGeometry, markerMaterial);
+                    marker.position.set(x, y, z);
+                    marker.renderOrder = 20;
+                    marker.userData = {
+                        isCornerNode: true,
+                        cornerIndex: parseInt(cornerIdx),
+                        globalNodeId: globalNodeId,
+                        plateId: wall.id
+                    };
+                    
+                    entry.group.add(marker);
+                    entry.cornerMarkers.push(marker);
+                });
+                
+                console.log('Added', entry.cornerMarkers.length, 'corner markers for plate', wall.id);
+            });
+        },
+
+        ensurePlate3DAssets() {
+            if (!this.sharedPlateNodeGeometry) {
+                this.sharedPlateNodeGeometry = new THREE.SphereGeometry(0.12, 18, 18);
+            }
+        },
+
+        createPlateMeshMaterial(options = {}) {
+            const highlighted = options.highlighted || false;
+            return new THREE.MeshStandardMaterial({
+                color: highlighted ? this.highlightPlateColor : this.basePlateColor,
+                transparent: true,
+                opacity: highlighted ? this.highlightPlateOpacity : this.inactivePlateOpacity,
+                roughness: 0.45,
+                metalness: 0.08,
+                emissive: highlighted ? new THREE.Color(this.highlightPlateColor).multiplyScalar(0.15) : new THREE.Color(0x000000),
+                side: THREE.DoubleSide,
+            });
+        },
+
+        buildPlateMeshGroup(wall, options = {}) {
+            if (!wall) return null;
+            const container = this.ensurePlateMeshGroup();
+            if (!container) return null;
+
+            const resolveNumber = (value, fallback) => {
+                if (typeof value === "number" && !Number.isNaN(value)) {
+                    return value;
+                }
+                const parsed = parseFloat(value);
+                return Number.isFinite(parsed) ? parsed : fallback;
+            };
+
+            const length = Math.max(resolveNumber(wall.length, wall.geometry?.length || 0.1), 0.01);
+            const height = Math.max(resolveNumber(wall.height, wall.geometry?.height || 0.1), 0.01);
+            const thickness = Math.max(
+                resolveNumber(wall.thickness, wall.geometry?.thickness || 0.1),
+                0.01
+            );
+
+            const px = Array.isArray(wall.position) ? resolveNumber(wall.position[0], 0) : 0;
+            const py = Array.isArray(wall.position) ? resolveNumber(wall.position[1], 0) : 0;
+            const pz = Array.isArray(wall.position) ? resolveNumber(wall.position[2], 0) : 0;
+            const rotation = resolveNumber(wall.rotation_y, 0);
+
+            const group = new THREE.Group();
+            group.position.set(px, py, pz);
+            if (Number.isFinite(rotation)) {
+                group.rotation.z = rotation;
+            }
+            group.userData = Object.assign({}, group.userData || {}, { plateId: wall.id });
+
+            const fillGeometry = new THREE.PlaneGeometry(length, height);
+            const fillMaterial = this.createPlateMeshMaterial(options);
+            const fillMesh = new THREE.Mesh(fillGeometry, fillMaterial);
+            fillMesh.name = "plate-fill";
+            fillMesh.position.set(0, 0, 0.001);
+            fillMesh.castShadow = false;
+            fillMesh.receiveShadow = false;
+            group.add(fillMesh);
+
+            const outlineGeometry = new THREE.PlaneGeometry(length, height);
+            const edgeGeometry = new THREE.EdgesGeometry(outlineGeometry);
+            outlineGeometry.dispose();
+            const edgeMaterial = new THREE.LineBasicMaterial({ color: 0x111827, linewidth: 1 });
+            edgeMaterial.depthTest = false;
+            edgeMaterial.depthWrite = false;
+            const edgeLines = new THREE.LineSegments(edgeGeometry, edgeMaterial);
+            edgeLines.name = "plate-wireframe";
+            edgeLines.position.set(0, 0, 0.003);
+            edgeLines.renderOrder = 5;
+            group.add(edgeLines);
+
+            this.ensurePlate3DAssets();
+            const nodes = [];
+            const nodeColor = options.highlighted ? this.nodeHighlightColor : this.nodeBaseColor;
+            const nodeMaterial = new THREE.MeshStandardMaterial({
+                color: nodeColor,
+                roughness: 0.35,
+                metalness: 0.1,
+            });
+            const halfL = length / 2;
+            const halfH = height / 2;
+            const nodeZ = 0.01;
+            const nodePositions = [
+                [-halfL, -halfH, nodeZ],
+                [-halfL, halfH, nodeZ],
+                [halfL, -halfH, nodeZ],
+                [halfL, halfH, nodeZ],
+            ];
+            nodePositions.forEach(([nx, ny, nz], index) => {
+                const node = new THREE.Mesh(this.sharedPlateNodeGeometry, nodeMaterial.clone());
+                node.position.set(nx, ny, nz + 0.003);
+                node.scale.setScalar(0.6);
+                node.userData = {
+                    type: "node",
+                    plateId: wall.id,
+                    nodeIndex: index,
+                    constraintKey: `${wall.id}:corner:${index}`,
+                };
+                const resolved = this.resolveConstraintForNode(wall, index);
+                if (resolved) {
+                    this.applySupportSymbolForNode(node, resolved.type, "3d");
+                    this.applyConstraintAppearanceToNode(node, resolved.type);
+                }
+                group.add(node);
+                nodes.push(node);
+            });
+            nodeMaterial.dispose();
+
+            const entry = {
+                group,
+                fill: fillMesh,
+                edges: edgeLines,
+                nodes,
+                length,
+                height,
+                thickness,
+                highlighted: !!options.highlighted,
+                meshOverlay: null,
+                contourGroup: null,
+            };
+
+            return entry;
+        },
+
+        setPlateMeshHighlightState(entry, highlighted) {
+            if (!entry) return;
+            entry.highlighted = !!highlighted;
+            const fillColor = highlighted ? this.highlightPlateColor : this.basePlateColor;
+            const fillOpacity = highlighted ? this.highlightPlateOpacity : this.inactivePlateOpacity;
+            if (entry.fill && entry.fill.material) {
+                entry.fill.material.color.set(fillColor);
+                entry.fill.material.opacity = fillOpacity;
+                entry.fill.material.transparent = true;
+                entry.fill.material.needsUpdate = true;
+            }
+            if (entry.edges && entry.edges.material) {
+                const edgeColor = highlighted ? this.highlightPlateColor : 0x111827;
+                entry.edges.material.color.set(edgeColor);
+                entry.edges.material.needsUpdate = true;
+            }
+            if (Array.isArray(entry.nodes)) {
+                const nodeColor = highlighted ? this.nodeHighlightColor : this.nodeBaseColor;
+                entry.nodes.forEach((node) => {
+                    if (node.material && node.material.color) {
+                        if (node.userData && node.userData.constraintType) {
+                            const base = new THREE.Color(this.supportColor || 0x34d399);
+                            const color = highlighted ? base.clone().offsetHSL(0, 0, 0.1) : base;
+                            node.material.color.set(color);
+                        } else {
+                            node.material.color.set(nodeColor);
+                        }
+                        node.material.needsUpdate = true;
+                    }
+                    const scale = highlighted ? 0.7 : 0.6;
+                    node.scale.setScalar(scale);
+                });
+            }
+        },
+
+        applyRenderModeToPlate(entry) {
+            if (!entry) return;
+            const mode = (this.renderMode || "wireframe").toLowerCase();
+            if (entry.fill) {
+                entry.fill.visible = true;
+                const baseOpacity = entry.highlighted
+                    ? this.highlightPlateOpacity
+                    : this.inactivePlateOpacity;
+                if (mode === "solid") {
+                    entry.fill.material.opacity = 0.95;
+                } else if (mode === "transparent") {
+                    entry.fill.material.opacity = 0.25;
+                } else {
+                    entry.fill.material.opacity = baseOpacity;
+                }
+                entry.fill.material.transparent = true;
+                entry.fill.material.needsUpdate = true;
+            }
+            if (entry.edges) {
+                entry.edges.visible = mode !== "solid";
+            }
+            if (Array.isArray(entry.nodes)) {
+                entry.nodes.forEach((node) => {
+                    node.visible = true;
+                });
+            }
+        },
+
+        addPlateMesh(wall) {
+            if (!wall || !wall.id) return;
+            const container = this.ensurePlateMeshGroup();
+            if (!container) return;
+            this.plateMeshes = this.plateMeshes || {};
+            this.removePlateMesh(wall.id);
+            const entry = this.buildPlateMeshGroup(wall, {
+                highlighted: this.selectedWallId === wall.id,
+            });
+            if (!entry) return;
+            container.add(entry.group);
+            this.plateMeshes[wall.id] = entry;
+            this.setPlateMeshHighlightState(entry, entry.highlighted);
+            this.applyRenderModeToPlate(entry);
+            this.applyMeshOverlayToPlateEntry(wall, entry);
+            this.refreshNodeLoadVisuals();
+        },
+
+        removePlateMesh(wallId) {
+            if (!this.plateMeshes || !wallId) return;
+            const entry = this.plateMeshes[wallId];
+            if (!entry) return;
+            if (entry.group && entry.group.parent) {
+                entry.group.parent.remove(entry.group);
+            }
+            if (entry.fill) {
+                if (entry.fill.geometry && entry.fill.geometry.dispose) {
+                    entry.fill.geometry.dispose();
+                }
+                if (entry.fill.material && entry.fill.material.dispose) {
+                    entry.fill.material.dispose();
+                }
+            }
+            if (entry.edges) {
+                if (entry.edges.geometry && entry.edges.geometry.dispose) {
+                    entry.edges.geometry.dispose();
+                }
+                if (entry.edges.material && entry.edges.material.dispose) {
+                    entry.edges.material.dispose();
+                }
+            }
+            if (Array.isArray(entry.nodes)) {
+                entry.nodes.forEach((node) => {
+                    this.removeSupportSymbolForNode(node);
+                    if (typeof this.clearNodeLoadIndicatorsForNode === "function") {
+                        this.clearNodeLoadIndicatorsForNode(node);
+                    }
+                    if (node.material && node.material.dispose) {
+                        node.material.dispose();
+                    }
+                    if (node.parent) {
+                        node.parent.remove(node);
+                    }
+                });
+            }
+            if (entry.contourGroup) {
+                entry.contourGroup.children.slice().forEach((mesh) => {
+                    if (mesh.geometry && typeof mesh.geometry.dispose === "function") {
+                        mesh.geometry.dispose();
+                    }
+                    if (mesh.material && typeof mesh.material.dispose === "function") {
+                        mesh.material.dispose();
+                    }
+                    entry.contourGroup.remove(mesh);
+                });
+                if (entry.contourGroup.parent) {
+                    entry.contourGroup.parent.remove(entry.contourGroup);
+                }
+                entry.contourGroup = null;
+            }
+            this.disposePlateMeshOverlay(entry);
+            delete this.plateMeshes[wallId];
+            this.refreshNodeLoadVisuals();
+        },
+
+        clearAllPlateMeshes() {
+            if (!this.plateMeshes) {
+                this.plateMeshes = {};
+            }
+            Object.keys(this.plateMeshes).forEach((id) => this.removePlateMesh(id));
+            this.plateMeshes = {};
+        },
+
+        refreshPlateMeshAppearance() {
+            if (!this.plateMeshes) return;
+            Object.entries(this.plateMeshes).forEach(([id, entry]) => {
+                const highlighted = !!this.selectedWallId && this.selectedWallId === id;
+                this.setPlateMeshHighlightState(entry, highlighted);
+                this.applyRenderModeToPlate(entry);
+            });
+        },
+
+        setRenderMode(mode) {
+            if (!mode) return;
+            const normalized = String(mode).toLowerCase();
+            const allowed = new Set(["wireframe", "solid", "transparent"]);
+            if (!allowed.has(normalized)) return;
+            if (this.renderMode === normalized) return;
+            this.renderMode = normalized;
+            this.refreshPlateMeshAppearance();
+        },
+
+        computePlateElementLayout(wall) {
+            if (!wall) return null;
+            const geometry = wall.geometry || {};
+            const length = Number(wall.length ?? geometry.length ?? 0);
+            const height = Number(wall.height ?? geometry.height ?? 0);
+            if (!(length > 0) || !(height > 0)) return null;
+
+            let size = Number(this.meshOverlaySize);
+            if (!(size > 0)) {
+                size = 0.2;
+            }
+            const segmentsX = Math.max(1, Math.ceil(length / size));
+            const segmentsY = Math.max(1, Math.ceil(height / size));
+            const position = Array.isArray(wall.position) ? wall.position : [0, 0, 0];
+            const rotation = Number.isFinite(wall.rotation_y) ? wall.rotation_y : 0;
+
+            return {
+                length,
+                height,
+                segmentsX,
+                segmentsY,
+                elementCount: segmentsX * segmentsY,
+                position,
+                rotation,
+            };
+        },
+
+        setAnalysisResults(_results) {
+            if (typeof console !== "undefined" && typeof console.debug === "function") {
+                console.debug("Analysis results received but stress visualization is disabled.");
+            }
+            this.clearAnalysisResults();
+        },
+
+        clearAnalysisResults() {
+            if (typeof this.hideStressLegend === "function") {
+                this.hideStressLegend();
+            }
+        },
+
+        getPlateDisplayNumber(wallId) {
+            if (!wallId) return null;
+            if (!Array.isArray(this.wallOrdering)) return null;
+            const index = this.wallOrdering.indexOf(wallId);
+            if (index === -1) return null;
+            return index + 1;
+        },
+
+        createOrUpdatePlateLabel(wall) {
+            if (!wall || !wall.id) return;
+            if (typeof this.ensureLabelContainer === "function") {
+                this.ensureLabelContainer();
+            }
+            if (!this.labelContainer) return;
+
+            const wallId = wall.id;
+            let label = this.plateLabels[wallId];
+            if (!label) {
+                label = global.document.createElement("div");
+                label.className = "plate-label";
+                label.dataset.wallId = wallId;
+                this.labelContainer.appendChild(label);
+                this.plateLabels[wallId] = label;
+            }
+
+            this.updatePlateLabelText(wallId);
+            this.updatePlateLabelVisibility();
+            this.updatePlateLabelPosition(wallId);
+        },
+
+        updatePlateLabelText(wallId) {
+            if (!wallId) return;
+            const label = this.plateLabels?.[wallId];
+            if (!label) return;
+            const number = this.getPlateDisplayNumber(wallId);
+            label.textContent = number !== null ? `P${number}` : "";
+            if (number === null && !this.showPlateLabels && this.selectedWallId !== wallId) {
+                label.style.display = "none";
+            }
+        },
+
+        updatePlateLabelPosition(wallId) {
+            if (!wallId) return;
+            const label = this.plateLabels?.[wallId];
+            const group = this.plateOverlays?.[wallId];
+            if (!label || !group || !this.camera || !this.renderer) return;
+            const rect = group.userData?.rect;
+            if (!rect) return;
+
+            const world = new THREE.Vector3(
+                (rect.minX + rect.maxX) / 2,
+                (rect.minY + rect.maxY) / 2,
+                0
+            );
+            const projected = world.clone().project(this.camera);
+            const canvas = this.renderer.domElement;
+            if (!canvas) return;
+            const width = canvas.clientWidth || 1;
+            const height = canvas.clientHeight || 1;
+            const left = (projected.x * 0.5 + 0.5) * width;
+            const top = (-projected.y * 0.5 + 0.5) * height;
+            label.style.left = `${left}px`;
+            label.style.top = `${top}px`;
+        },
+
+        updatePlateLabelVisibility() {
+            if (!this.plateLabels) return;
+            Object.entries(this.plateLabels).forEach(([id, label]) => {
+                if (!label) return;
+                const isSelected = this.selectedWallId && this.selectedWallId === id;
+                const shouldShow = this.showPlateLabels || isSelected;
+                label.style.display = shouldShow ? "block" : "none";
+                label.classList.toggle("plate-label--selected", !!isSelected);
+            });
+        },
+
+        setPlateLabelsEnabled(enabled) {
+            this.showPlateLabels = !!enabled;
+            if (this.labelContainer) {
+                this.labelContainer.style.display = this.showPlateLabels ? "block" : "none";
+            }
+            this.updatePlateLabelVisibility();
+            this.updateAllPlateLabelPositions();
+        },
+
+        removePlateLabel(wallId) {
+            if (!wallId || !this.plateLabels) return;
+            const label = this.plateLabels[wallId];
+            if (label && label.parentNode) {
+                label.parentNode.removeChild(label);
+            }
+            delete this.plateLabels[wallId];
+        },
+
+        refreshPlateLabels() {
+            if (!this.plateLabels) return;
+            Object.keys(this.plateLabels).forEach((id) => {
+                this.updatePlateLabelText(id);
+            });
+            this.updatePlateLabelVisibility();
+            this.updateAllPlateLabelPositions();
+        },
+
+        collectNodeMeshes() {
+            const nodes = [];
+            Object.entries(this.plateOverlays).forEach(([, group]) => {
+                if (!group) return;
+                group.children.forEach((child) => {
+                    if (
+                        child.userData &&
+                        child.userData.type === "node" &&
+                        child.userData.scope !== "preview"
+                    ) {
+                        nodes.push(child);
+                    }
+                });
+            });
+            if (this.standaloneNodeGroup) {
+                this.standaloneNodeGroup.children.forEach((child) => {
+                    if (
+                        child.userData &&
+                        child.userData.type === "node" &&
+                        child.userData.scope !== "preview"
+                    ) {
+                        nodes.push(child);
+                    }
+                });
+            }
+            
+            // Add Polygon Nodes
+            if (this.polygonOverlays) {
+                Object.values(this.polygonOverlays).forEach(group => {
+                    if (!group) return;
+                    
+                    // Collect standard nodes (vertices)
+                    group.children.forEach(child => {
+                        if (child.userData && child.userData.type === 'polygon-vertex') {
+                            // Treat polygon vertices as nodes for interaction
+                            child.userData.type = 'node'; // Ensure type is 'node' for findNodeUnderPointer
+                            nodes.push(child);
+                        }
+                    });
+
+                    // Collect mesh nodes if present
+                    if (group.userData && group.userData.meshOverlay && group.userData.meshOverlay.visible) {
+                        group.userData.meshOverlay.children.forEach(child => {
+                            if (child.isPoints && child.userData && child.userData.isMeshNodes) {
+                                nodes.push(child);
+                            }
+                        });
+                    }
+                });
+            }
+            
+            // Add Mesh Nodes (Points) and Virtual Nodes
+            if (this.plateMeshes) {
+                Object.values(this.plateMeshes).forEach(entry => {
+                    // Check meshOverlay children
+                    if (entry.meshOverlay && entry.meshOverlay.visible) {
+                        entry.meshOverlay.children.forEach(child => {
+                            // Collect Points for raycasting (handled specially in interactions.js)
+                            if (child.isPoints && child.userData && child.userData.isMeshNodes) {
+                                nodes.push(child);
+                            }
+                            // Collect materialized virtual nodes
+                            if (child.userData && child.userData.isMeshNode && child.userData.type === "node") {
+                                nodes.push(child);
+                            }
+                        });
+                    }
+                    
+                    // Check group children (where allNodeMarkers might be)
+                    if (entry.group) {
+                        entry.group.children.forEach(child => {
+                            if (child.isPoints && child.userData && child.userData.isNodeMarkers) {
+                                nodes.push(child);
+                            }
+                        });
+                    }
+                });
+            }
+
+            return nodes;
+        },
+
+        getVirtualMeshNode(plateId, nodeId) {
+            if (!this.virtualMeshNodes) return null;
+            return this.virtualMeshNodes[`${plateId}:${nodeId}`];
+        },
+
+        registerVirtualMeshNode(plateId, nodeId, node) {
+            if (!this.virtualMeshNodes) this.virtualMeshNodes = {};
+            this.virtualMeshNodes[`${plateId}:${nodeId}`] = node;
+        },
+
+        ensureVirtualMeshNode(proxy) {
+            if (!proxy.isVirtualNodeProxy) return proxy;
+            
+            const { plateId, id } = proxy.userData;
+            let realNode = this.getVirtualMeshNode(plateId, id);
+            if (realNode) return realNode;
+            
+            const THREE = global.THREE;
+            realNode = new THREE.Group();
+            realNode.position.copy(proxy.position);
+            realNode.userData = { ...proxy.userData };
+            delete realNode.userData.isVirtualNodeProxy;
+            
+            // Add to scene
+            if (proxy.parentGroup) {
+                proxy.parentGroup.add(realNode);
+            }
+            
+            this.registerVirtualMeshNode(plateId, id, realNode);
+            return realNode;
+        },
+
+        removeNodeMesh(mesh) {
+            if (!mesh) return false;
+            if (typeof this.clearNodeLoadIndicatorsForNode === "function") {
+                this.clearNodeLoadIndicatorsForNode(mesh);
+            }
+            const parent = mesh.parent;
+            if (parent) {
+                parent.remove(mesh);
+            }
+            if (mesh.material && mesh.material.dispose) {
+                mesh.material.dispose();
+            }
+            if (mesh.geometry) {
+                mesh.geometry.dispose();
+            }
+            return true;
+        },
+
+        deleteNodeMesh(mesh) {
+            if (
+                !mesh ||
+                !mesh.userData ||
+                mesh.userData.type !== "node" ||
+                mesh.userData.scope === "preview" ||
+                mesh.userData.isMeshNode // Prevent deleting mesh nodes
+            ) {
+                return false;
+            }
+            const parentGroup = mesh.parent;
+            const payload = {
+                position: [mesh.position.x, mesh.position.y, mesh.position.z],
+            };
+            if (mesh.userData.plateId) {
+                payload.plateId = mesh.userData.plateId;
+            } else if (parentGroup && parentGroup.userData && parentGroup.userData.plateId) {
+                payload.plateId = parentGroup.userData.plateId;
+            }
+            if (
+                typeof mesh.userData.gridX === "number" &&
+                typeof mesh.userData.gridY === "number"
+            ) {
+                payload.grid = [mesh.userData.gridX, mesh.userData.gridY];
+            }
+            const removed = this.removeNodeMesh(mesh);
+            if (!removed) return false;
+            dispatchViewportEvent("nodeDeleted2D", payload);
+            return true;
+        },
+
+        applyConstraintToolToNode(node) {
+            console.log('[applyConstraintToolToNode] Called for node:', node);
+            if (!node) return;
+            if (node.isVirtualNodeProxy) {
+                node = this.ensureVirtualMeshNode(node);
+            }
+            if (!node.userData) return;
+            const tool = this.constraintTool;
+            console.log('[applyConstraintToolToNode] Current tool:', tool);
+            if (!tool) return;
+
+            let constraintType = null;
+            if (tool === "clear" || tool === "remove" || tool === "none") {
+                constraintType = null;
+            } else if (typeof tool === "string") {
+                constraintType = tool.toLowerCase();
+            }
+
+            const direction = constraintType === "roller" ? "vertical" : null;
+
+            const context = this.is2D ? "2d" : "3d";
+
+            if (constraintType) {
+                this.applySupportSymbolForNode(node, constraintType, context);
+                this.applyConstraintAppearanceToNode(node, constraintType);
+            } else {
+                this.removeSupportSymbolForNode(node);
+                this.applyConstraintAppearanceToNode(node, null);
+            }
+
+            const plateId = node.userData.plateId || (node.parent?.userData?.plateId ?? null);
+            const nodeIndex = typeof node.userData.nodeIndex === "number" ? node.userData.nodeIndex : null;
+            if (plateId && nodeIndex !== null) {
+                this.updatePlateMeshConstraintVisual(plateId, nodeIndex, constraintType);
+            }
+
+            const world = new THREE.Vector3();
+            if (typeof node.getWorldPosition === "function") {
+                node.getWorldPosition(world);
+            } else {
+                world.set(node.position.x, node.position.y, node.position.z);
+            }
+
+            const nodeKey = node.userData.constraintKey || node.userData.id || null;
+
+            this.emitNodeConstraintEvent({
+                plateId: plateId || null,
+                nodeIndex,
+                nodeKey,
+                position: [world.x, world.y, world.z],
+                constraintType,
+                direction,
+            });
+        },
+
+        updatePlateMeshConstraintVisual(plateId, nodeIndex, constraintType) {
+            if (!this.plateMeshes || !plateId) return;
+            const entry = this.plateMeshes[plateId];
+            if (!entry || !Array.isArray(entry.nodes)) return;
+            const node = entry.nodes[nodeIndex];
+            if (!node) return;
+            if (constraintType) {
+                this.applySupportSymbolForNode(node, constraintType, "3d");
+                this.applyConstraintAppearanceToNode(node, constraintType);
+            } else {
+                this.removeSupportSymbolForNode(node);
+                this.applyConstraintAppearanceToNode(node, null);
+            }
+        },
+
+        emitNodeConstraintEvent({ plateId, nodeIndex, nodeKey, position, constraintType, direction }) {
+            const payload = {
+                plate_id: plateId,
+                node_index: nodeIndex,
+                node_key: nodeKey,
+                position,
+                constraint_type: constraintType,
+            };
+            if (direction) {
+                payload.direction = direction;
+            }
+            dispatchViewportEvent("nodeConstraintChanged", payload);
+        },
+
+        emitNodeLoadEvent({ plateId, nodeIndex, position, magnitude, direction }) {
+            const payload = {
+                plate_id: plateId,
+                node_index: nodeIndex,
+                position,
+                magnitude,
+                direction,
+            };
+            dispatchViewportEvent("nodeLoadChanged", payload);
+        },
+
+        setNodeLoadTool(options = {}) {
+            const enabled = !!options.enabled;
+            this.nodeLoadToolEnabled = enabled;
+            if (typeof options.magnitude === "number" && Number.isFinite(options.magnitude)) {
+                this.nodeLoadMagnitude = options.magnitude;
+            }
+            if (!enabled && this.mode === "apply-load") {
+                this.setMode("select");
+            }
+        },
+
+        normalizeLoadDirection(direction) {
+            if (Array.isArray(direction) && direction.length >= 3) {
+                const vec = [Number(direction[0]) || 0, Number(direction[1]) || 0, Number(direction[2]) || 0];
+                const len = Math.hypot(vec[0], vec[1], vec[2]);
+                if (len > 1e-6) {
+                    return vec.map((component) => component / len);
+                }
+            }
+            return [0, -1, 0];
+        },
+
+        parseNodeLoads(loads) {
+            if (!loads) return [];
+            let data = loads;
+            if (typeof loads === "string") {
+                try {
+                    data = JSON.parse(loads);
+                } catch (err) {
+                    console.error("Failed to parse node loads payload", err);
+                    return [];
+                }
+            }
+            if (!Array.isArray(data)) return [];
+            return data
+                .map((entry) => {
+                    if (!entry || typeof entry !== "object") return null;
+                    const plateId = entry.plate_id ?? entry.plateId ?? null;
+                    const nodeIndexRaw = entry.node_index ?? entry.nodeIndex;
+                    const nodeIndex = typeof nodeIndexRaw === "number" ? nodeIndexRaw : null;
+                    const magnitude = Number(entry.magnitude ?? 0);
+                    const direction = this.normalizeLoadDirection(entry.direction ?? entry.direction_vec ?? entry.vector);
+                    const position = Array.isArray(entry.position)
+                        ? [Number(entry.position[0]) || 0, Number(entry.position[1]) || 0, Number(entry.position[2]) || 0]
+                        : null;
+                    return {
+                        id: entry.id ?? null,
+                        plate_id: plateId,
+                        node_index: nodeIndex,
+                        magnitude,
+                        direction,
+                        position,
+                    };
+                })
+                .filter(Boolean);
+        },
+
+        buildNodeLoadKey(load) {
+            if (!load) return null;
+            if (load.plate_id && typeof load.node_index === "number") {
+                return `${load.plate_id}:${load.node_index}`;
+            }
+            if (Array.isArray(load.position)) {
+                const [x = 0, y = 0, z = 0] = load.position;
+                return `pos:${x.toFixed(3)}:${y.toFixed(3)}:${z.toFixed(3)}`;
+            }
+            return null;
+        },
+
+        getNodeLoadKeyForMesh(node) {
+            if (!node || !node.userData) return null;
+            const plateId = node.userData.plateId || (node.parent?.userData?.plateId ?? null);
+            const nodeIndex = typeof node.userData.nodeIndex === "number" ? node.userData.nodeIndex : null;
+            if (plateId && nodeIndex !== null) {
+                return `${plateId}:${nodeIndex}`;
+            }
+            const pos = node.position;
+            if (pos) {
+                return `pos:${pos.x.toFixed(3)}:${pos.y.toFixed(3)}:${pos.z.toFixed(3)}`;
+            }
+            return null;
+        },
+
+        createLoadIndicator2D(magnitude, direction) {
+            const absMag = Math.abs(magnitude);
+            const length = THREE.MathUtils.clamp(absMag * 0.08 + 0.4, 0.3, 1.5);
+            const color = 0xdc2626;
+            const material = new THREE.MeshBasicMaterial({
+                color,
+                transparent: true,
+                opacity: 0.92,
+                depthTest: false,
+                depthWrite: false,
+            });
+            const group = new THREE.Group();
+            group.userData = Object.assign({}, group.userData || {}, { role: "node-load", context: "2d" });
+            group.renderOrder = 15;
+
+            // Arrow head (triangle/cone pointing down)
+            const headShape = new THREE.Shape();
+            const headWidth = 0.22;
+            const headHeight = length * 0.35;
+            headShape.moveTo(0, 0);  // Tip at node level
+            headShape.lineTo(-headWidth / 2, headHeight);  // Bottom left (flat edge)
+            headShape.lineTo(headWidth / 2, headHeight);   // Bottom right (flat edge)
+            headShape.closePath();
+            const head = new THREE.Mesh(new THREE.ShapeGeometry(headShape), material.clone());
+            head.position.set(0, 0, 0.012);  // Position tip at node level
+            group.add(head);
+
+            // Shaft (vertical stem) - starts at flat edge of head
+            const shaftLength = length * 0.65;
+            const shaftWidth = 0.055;  // Thinner stem
+            const shaft = new THREE.Mesh(new THREE.PlaneGeometry(shaftWidth, shaftLength), material.clone());
+            shaft.position.set(0, headHeight + shaftLength / 2, 0.011);  // Start at flat edge of head
+            group.add(shaft);
+
+            // Direction is in 3D space [x, y, z], but in 2D view we only care about X and Y
+            // For a typical downward load, direction is [0, 0, -1] which means "into the plate"
+            // In 2D elevation view, negative Z becomes negative Y (downward)
+            const dir3 = this.normalizeLoadDirection(direction);
+            
+            // For 2D view: if direction has Z component, map it to Y
+            // This handles the case where loads are applied in Z direction
+            let vec2X = Array.isArray(dir3) ? (dir3[0] || 0) : 0;
+            let vec2Y = Array.isArray(dir3) ? (dir3[1] || 0) : 0;
+            const vecZ = Array.isArray(dir3) ? (dir3[2] || 0) : 0;
+            
+            // If there's a Z component but no Y component, use Z as Y (map out-of-plane to vertical)
+            if (Math.abs(vecZ) > 1e-6 && Math.abs(vec2Y) < 1e-6) {
+                vec2Y = -vecZ;  // Negative Z (into page) becomes down in 2D view
+            }
+            
+            const vec2 = new THREE.Vector2(vec2X, vec2Y);
+            if (vec2.lengthSq() > 1e-4) {
+                vec2.normalize();
+            } else {
+                vec2.set(0, -1);  // Default: point down
+            }
+            
+            // Rotation: 0 rotation means arrow points down (default orientation)
+            // We need to rotate to align with the direction vector
+            // atan2(y, x) gives angle from positive X axis, but we want angle from negative Y axis
+            const rotation = Math.atan2(vec2.x, -vec2.y);
+            group.rotation.z = rotation;
+
+            return group;
+        },
+
+        createLoadIndicator3D(magnitude, direction) {
+            const dir = this.normalizeLoadDirection(direction);
+            let vector = new THREE.Vector3(dir[0], dir[1], dir[2]);
+            if (vector.lengthSq() <= 1e-6) {
+                vector = new THREE.Vector3(0, 0, -1);  // Default: point down (negative Z)
+            }
+            vector.normalize();
+            
+            const length = THREE.MathUtils.clamp(Math.abs(magnitude) * 0.25 + 0.4, 0.3, 2.5);
+            const color = 0xef4444;
+            const headLength = Math.min(0.35, length * 0.35);
+            const headWidth = Math.min(0.20, headLength * 0.75);
+            
+            // Create arrow with custom geometry for better control
+            const group = new THREE.Group();
+            
+            // Arrow head (cone)
+            const coneGeometry = new THREE.ConeGeometry(headWidth / 2, headLength, 8);
+            const coneMaterial = new THREE.MeshStandardMaterial({
+                color,
+                transparent: true,
+                opacity: 0.95,
+                emissive: color,
+                emissiveIntensity: 0.3,
+                roughness: 0.5,
+                metalness: 0.1,
+            });
+            const cone = new THREE.Mesh(coneGeometry, coneMaterial);
+            cone.renderOrder = 100;
+            
+            // Shaft (cylinder) - thinner stem
+            const shaftLength = length - headLength;
+            const shaftRadius = headWidth * 0.25;  // Thinner stem
+            const shaftGeometry = new THREE.CylinderGeometry(shaftRadius, shaftRadius, shaftLength, 8);
+            const shaftMaterial = new THREE.MeshStandardMaterial({
+                color,
+                transparent: true,
+                opacity: 0.9,
+                emissive: color,
+                emissiveIntensity: 0.2,
+                roughness: 0.5,
+                metalness: 0.1,
+            });
+            const shaft = new THREE.Mesh(shaftGeometry, shaftMaterial);
+            shaft.renderOrder = 100;
+            
+            // Position cone at origin (tip at node)
+            cone.position.set(0, headLength / 2, 0);
+            
+            // Position shaft to start at flat edge of cone
+            shaft.position.set(0, headLength + shaftLength / 2, 0);
+            
+            group.add(cone);
+            group.add(shaft);
+            
+            // Rotate to point in the load direction
+            // Default orientation is pointing up (+Y), we need to rotate to match vector
+            const defaultDir = new THREE.Vector3(0, 1, 0);
+            const quaternion = new THREE.Quaternion();
+            quaternion.setFromUnitVectors(defaultDir, vector);
+            group.quaternion.copy(quaternion);
+            
+            group.renderOrder = 100;
+            
+            group.userData = Object.assign({}, group.userData || {}, { role: "node-load", context: "3d" });
+            return group;
+        },
+
+        removeLoadIndicatorFromNode(node, context) {
+            if (!node || !node.userData || !node.userData.loadIndicators) return;
+            const removeIndicator = (indicator) => {
+                if (!indicator) return;
+                if (indicator.parent) {
+                    indicator.parent.remove(indicator);
+                }
+                if (typeof indicator.traverse === "function") {
+                    indicator.traverse((child) => {
+                        if (child.isMesh || child.isLine) {
+                            if (child.material && child.material.dispose) {
+                                child.material.dispose();
+                            }
+                            if (child.geometry && child.geometry.dispose) {
+                                child.geometry.dispose();
+                            }
+                        }
+                    });
+                } else {
+                    if (indicator.material && indicator.material.dispose) {
+                        indicator.material.dispose();
+                    }
+                    if (indicator.geometry && indicator.geometry.dispose) {
+                        indicator.geometry.dispose();
+                    }
+                }
+            };
+
+            if (context) {
+                const indicator = node.userData.loadIndicators[context];
+                removeIndicator(indicator);
+                delete node.userData.loadIndicators[context];
+            } else {
+                Object.keys(node.userData.loadIndicators).forEach((key) => {
+                    removeIndicator(node.userData.loadIndicators[key]);
+                    delete node.userData.loadIndicators[key];
+                });
+            }
+        },
+
+        clearNodeLoadIndicatorsForNode(node) {
+            if (!node || !node.userData || !node.userData.loadIndicators) return;
+            this.removeLoadIndicatorFromNode(node, null);
+        },
+
+        applyNodeLoadVisualToNode(node, load, context) {
+            if (!node) return;
+            node.userData = node.userData || {};
+            node.userData.loadIndicators = node.userData.loadIndicators || {};
+
+            if (!load || typeof load !== "object") {
+                this.removeLoadIndicatorFromNode(node, context);
+                return;
+            }
+
+            const magnitude = Number(load.magnitude ?? 0);
+            if (!Number.isFinite(magnitude) || Math.abs(magnitude) <= 1e-6) {
+                this.removeLoadIndicatorFromNode(node, context);
+                return;
+            }
+
+            const direction = Array.isArray(load.direction) ? load.direction : [0, -1, 0];
+            this.removeLoadIndicatorFromNode(node, context);
+            let indicator = null;
+            if (context === "3d") {
+                indicator = this.createLoadIndicator3D(magnitude, direction);
+                if (indicator) {
+                    indicator.position.set(0, 0, 0);
+                }
+            } else {
+                indicator = this.createLoadIndicator2D(magnitude, direction);
+                if (indicator) {
+                    indicator.position.set(0, 0, 0.01);
+                }
+            }
+            if (!indicator) return;
+            node.add(indicator);
+            node.userData.loadIndicators[context] = indicator;
+        },
+
+        refreshNodeLoadVisuals() {
+            const loadMap = new Map();
+            if (Array.isArray(this.nodeLoads)) {
+                this.nodeLoads.forEach((load) => {
+                    const key = this.buildNodeLoadKey(load);
+                    if (key) {
+                        loadMap.set(key, load);
+                    }
+                });
+            }
+
+            const overlayNodes = this.collectNodeMeshes?.() || [];
+            overlayNodes.forEach((node) => {
+                const key = this.getNodeLoadKeyForMesh(node);
+                const load = key ? loadMap.get(key) : null;
+                this.applyNodeLoadVisualToNode(node, load, "2d");
+            });
+
+            if (this.plateMeshes) {
+                Object.values(this.plateMeshes).forEach((entry) => {
+                    if (!entry || !Array.isArray(entry.nodes)) return;
+                    entry.nodes.forEach((node) => {
+                        const key = this.getNodeLoadKeyForMesh(node);
+                        const load = key ? loadMap.get(key) : null;
+                        this.applyNodeLoadVisualToNode(node, load, "3d");
+                    });
+                });
+            }
+
+            // Handle Mesh Node Loads
+            loadMap.forEach((load, key) => {
+                if (load.plate_id && typeof load.node_index === 'number') {
+                    // Check if it's a mesh node (we can check if we already processed it, but re-processing is fine)
+                    // We need to find the node if it's not a corner node
+                    
+                    // Try to find existing virtual node
+                    let node = this.getVirtualMeshNode(load.plate_id, load.node_index);
+                    
+                    if (!node) {
+                        // Try to create it
+                        const plateMesh = this.netgenPlateMeshes?.[load.plate_id];
+                        if (plateMesh) {
+                            const nodeData = plateMesh.nodes.find(n => n.id === load.node_index);
+                            if (nodeData) {
+                                const wall = this.latestWallData?.find(w => w.id === load.plate_id);
+                                if (wall) {
+                                    const geometry = wall.geometry || {};
+                                    const length = Number(wall.length ?? geometry.length ?? 0);
+                                    const height = Number(wall.height ?? geometry.height ?? 0);
+                                    
+                                    const x = nodeData.x - length / 2;
+                                    const y = nodeData.y - height / 2;
+                                    const z = 0.012 + 0.005;
+                                    
+                                    const proxy = {
+                                        isVirtualNodeProxy: true,
+                                        userData: {
+                                            type: "node",
+                                            plateId: load.plate_id,
+                                            id: load.node_index,
+                                            isMeshNode: true
+                                        },
+                                        position: new global.THREE.Vector3(x, y, z),
+                                        parentGroup: this.plateMeshes[load.plate_id]?.meshOverlay
+                                    };
+                                    node = this.ensureVirtualMeshNode(proxy);
+                                }
+                            }
+                        }
+                    }
+                    
+                    if (node) {
+                        this.applyNodeLoadVisualToNode(node, load, "3d");
+                    }
+                }
+            });
+        },
+
+        updateNodeLoads(loads) {
+            this.nodeLoads = this.parseNodeLoads(loads);
+            this.refreshNodeLoadVisuals();
+        },
+
+        applyLoadToolToNode(node) {
+            if (!node || !this.nodeLoadToolEnabled) return;
+            if (node.isVirtualNodeProxy) {
+                node = this.ensureVirtualMeshNode(node);
+            }
+            const rawMagnitude = Number(this.nodeLoadMagnitude ?? 0);
+            const magnitude = Math.abs(rawMagnitude);
+            const sign = rawMagnitude >= 0 ? 1 : -1;
+            const plateId = node.userData?.plateId || (node.parent?.userData?.plateId ?? null);
+            const nodeIndex = typeof node.userData?.nodeIndex === "number" ? node.userData.nodeIndex : null;
+            const world = new THREE.Vector3();
+            if (typeof node.getWorldPosition === "function") {
+                node.getWorldPosition(world);
+            } else {
+                world.set(node.position.x, node.position.y, node.position.z);
+            }
+            this.emitNodeLoadEvent({
+                plateId,
+                nodeIndex,
+                position: [world.x, world.y, world.z],
+                magnitude,
+                direction: [0, -sign, 0],
+            });
+        },
+
+        // --- Geometry helpers ---
+        computeRectFromPoints(a, b) {
+            const minX = Math.min(a.x, b.x);
+            const maxX = Math.max(a.x, b.x);
+            const minY = Math.min(a.y, b.y);
+            const maxY = Math.max(a.y, b.y);
+            return { minX, maxX, minY, maxY };
+        },
+
+        getRectFromOverlay(group) {
+            if (!group) return null;
+            if (group.userData && group.userData.rect) return group.userData.rect;
+            let fill = null;
+            group.children.forEach((child) => {
+                if (child.userData && child.userData.role === "fill") fill = child;
+            });
+            if (fill && fill.geometry && fill.geometry.parameters) {
+                const w = fill.geometry.parameters.width || 0;
+                const h = fill.geometry.parameters.height || 0;
+                const cx = fill.position.x;
+                const cy = fill.position.y;
+                return { minX: cx - w / 2, maxX: cx + w / 2, minY: cy - h / 2, maxY: cy + h / 2 };
+            }
+            return null;
+        },
+
+        rectsOverlap(r1, r2) {
+            if (!r1 || !r2) return false;
+            const separated =
+                r1.maxX <= r2.minX ||
+                r1.minX >= r2.maxX ||
+                r1.maxY <= r2.minY ||
+                r1.minY >= r2.maxY;
+            return !separated;
+        },
+
+        isRectOverlappingExisting(rect) {
+            for (const group of Object.values(this.plateOverlays)) {
+                const ogRect = this.getRectFromOverlay(group);
+                if (this.rectsOverlap(rect, ogRect)) return true;
+            }
+            return false;
+        },
+
+        setPreviewInvalid(group, invalid) {
+            this.previewInvalid = invalid;
+            if (!group) return;
+            let fill = null;
+            group.children.forEach((child) => {
+                if (child.userData && child.userData.role === "fill") fill = child;
+            });
+            if (fill && fill.material) {
+                fill.material.color.set(invalid ? 0xff9800 : 0xeb002f);
+                fill.material.needsUpdate = true;
+            }
+        },
+
+        // --- Preview helpers ---
+        createPlatePreview(start, end) {
+            if (this.previewPlateGroup) this.clearPlatePreview();
+
+            const group = new THREE.Group();
+
+            const minX = Math.min(start.x, end.x);
+            const maxX = Math.max(start.x, end.x);
+            const minY = Math.min(start.y, end.y);
+            const maxY = Math.max(start.y, end.y);
+            const width = Math.max(maxX - minX, 0.01);
+            const height = Math.max(maxY - minY, 0.01);
+            const cx = (minX + maxX) / 2;
+            const cy = (minY + maxY) / 2;
+
+            const fillGeom = new THREE.PlaneGeometry(width, height);
+            const fillMat = new THREE.MeshBasicMaterial({
+                color: 0xeb002f,
+                transparent: true,
+                opacity: 0.6,
+                side: THREE.DoubleSide,
+            });
+            const fillMesh = new THREE.Mesh(fillGeom, fillMat);
+            fillMesh.position.set(cx, cy, 0);
+            fillMesh.userData = { role: "fill" };
+            group.add(fillMesh);
+
+            const edgeGeom = new THREE.EdgesGeometry(fillGeom);
+            const lineMat = new THREE.LineBasicMaterial({ color: 0x000000 });
+            const border = new THREE.LineSegments(edgeGeom, lineMat);
+            border.position.set(cx, cy, 0.002);
+            group.add(border);
+
+            const corners = [
+                [minX, minY],
+                [minX, maxY],
+                [maxX, minY],
+                [maxX, maxY],
+            ];
+            corners.forEach(([nx, ny], index) => {
+                const node = this.createNodeMarker(nx, ny, 0.001, {
+                    userData: { type: "node", scope: "preview" },
+                    color: 0x0f172a,
+                });
+                group.add(node);
+            });
+
+            group.userData = group.userData || {};
+            group.userData.rect = { minX, maxX, minY, maxY };
+
+            this.previewPlateGroup = group;
+            this.scene.add(group);
+
+            const rect = { minX, maxX, minY, maxY };
+            this.setPreviewInvalid(group, this.isRectOverlappingExisting(rect));
+        },
+
+        updatePlatePreview(start, end) {
+            if (!this.previewPlateGroup) return;
+            this.scene.remove(this.previewPlateGroup);
+            this.previewPlateGroup.children.forEach((child) => {
+                child.geometry && child.geometry.dispose();
+                child.material && child.material.dispose && child.material.dispose();
+            });
+            this.previewPlateGroup = null;
+            this.createPlatePreview(start, end);
+        },
+
+        clearPlatePreview() {
+            if (!this.previewPlateGroup) return;
+            this.scene.remove(this.previewPlateGroup);
+            this.previewPlateGroup.children.forEach((child) => {
+                child.geometry && child.geometry.dispose();
+                child.material && child.material.dispose && child.material.dispose();
+            });
+            this.previewPlateGroup = null;
+        },
+
+        finalizePlate(start, end) {
+            const minX = Math.min(start.x, end.x);
+            const maxX = Math.max(start.x, end.x);
+            const minY = Math.min(start.y, end.y);
+            const maxY = Math.max(start.y, end.y);
+            const width = Math.max(maxX - minX, 0.01);
+            const height = Math.max(maxY - minY, 0.01);
+            const cx = (minX + maxX) / 2;
+            const cy = (minY + maxY) / 2;
+
+            const rect = { minX, maxX, minY, maxY };
+            if (this.isRectOverlappingExisting(rect)) {
+                console.warn("Cannot draw plate overlapping an existing one.");
+                return;
+            }
+
+            const payload = { width, height, center: [cx, cy, 0] };
+            const event = new CustomEvent("wallDrawn2D", { detail: JSON.stringify(payload) });
+            global.window.dispatchEvent(event);
+
+            if (this.previewPlateGroup) {
+                this.setPlateGroupAppearance(this.previewPlateGroup, { highlighted: false });
+                const tempId = `temp_${Date.now()}`;
+                this.previewPlateGroup.userData = Object.assign({}, this.previewPlateGroup.userData, {
+                    plateId: tempId,
+                    rect,
+                });
+                this.plateOverlays[tempId] = this.previewPlateGroup;
+                this.previewPlateGroup = null;
+            }
+        },
+
+        handleWallSelection(event) {
+            if (!this.canvas) return;
+            if (typeof this.setPointerFromEvent === "function") {
+                if (!this.setPointerFromEvent(event)) return;
+            } else {
+                const rect = this.canvas.getBoundingClientRect();
+                this.pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+                this.pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+                this.raycaster.setFromCamera(this.pointer, this.camera);
+            }
+
+            const overlayMeshes = [];
+            Object.entries(this.plateOverlays).forEach(([id, group]) => {
+                group.children.forEach((child) => {
+                    if (child.userData && child.userData.role === "fill") {
+                        child.userData.plateId = id;
+                        overlayMeshes.push(child);
+                    }
+                });
+            });
+
+            const intersects = this.raycaster.intersectObjects(overlayMeshes, false);
+            let selectedId = null;
+            if (intersects.length > 0) {
+                selectedId = intersects[0].object.userData.plateId;
+            }
+
+            const selectionPayload = { id: selectedId };
+            const selectionEvent = new CustomEvent("wallSelected", {
+                detail: JSON.stringify(selectionPayload),
+            });
+            global.window.dispatchEvent(selectionEvent);
+        },
+
+        addPlateOverlay(wall) {
+            const group = new THREE.Group();
+            const width = wall.length;
+            const height = wall.height;
+            const cx = wall.position[0];
+            const cy = wall.position[1];
+
+            const fillGeom = new THREE.PlaneGeometry(width, height);
+            const fillMat = new THREE.MeshBasicMaterial({
+                color: this.basePlateColor,
+                transparent: true,
+                opacity: this.inactivePlateOpacity,
+                side: THREE.DoubleSide,
+            });
+            const fill = new THREE.Mesh(fillGeom, fillMat);
+            fill.position.set(cx, cy, 0);
+            fill.userData = { role: "fill" };
+            group.add(fill);
+
+            const edgeGeom = new THREE.EdgesGeometry(fillGeom);
+            const lineMat = new THREE.LineBasicMaterial({ color: 0x000000 });
+            const border = new THREE.LineSegments(edgeGeom, lineMat);
+            border.position.set(cx, cy, 0.002);
+            group.add(border);
+
+            const halfW = width / 2;
+            const halfH = height / 2;
+            const corners = [
+                [cx - halfW, cy - halfH],
+                [cx - halfW, cy + halfH],
+                [cx + halfW, cy - halfH],
+                [cx + halfW, cy + halfH],
+            ];
+            corners.forEach(([nx, ny], index) => {
+                const node = this.createNodeMarker(nx, ny, 0.001, {
+                    userData: {
+                        type: "node",
+                        plateId: wall.id,
+                        nodeIndex: index,
+                        constraintKey: `${wall.id}:corner:${index}`,
+                    },
+                });
+                const resolved = this.resolveConstraintForNode(wall, index);
+                if (resolved) {
+                    this.applySupportSymbolForNode(node, resolved.type, "2d");
+                    this.applyConstraintAppearanceToNode(node, resolved.type);
+                }
+                group.add(node);
+            });
+
+            group.visible = true;
+            group.userData = {
+                plateId: wall.id,
+                rect: {
+                    minX: cx - halfW,
+                    maxX: cx + halfW,
+                    minY: cy - halfH,
+                    maxY: cy + halfH,
+                },
+            };
+
+            this.scene.add(group);
+            this.plateOverlays[wall.id] = group;
+            this.setPlateGroupAppearance(group, { highlighted: this.selectedWallId === wall.id });
+            this.createOrUpdatePlateLabel(wall);
+            this.addPlateMesh(wall);
+            this.applyMeshOverlayToGroup(wall, group);
+        },
+
+        updatePlateOverlay(wall) {
+            const group = this.plateOverlays[wall.id];
+            if (!group) {
+                this.addPlateOverlay(wall);
+                return;
+            }
+
+            this.scene.remove(group);
+            this.disposeNodeContainer(group);
+            delete this.plateOverlays[wall.id];
+            this.addPlateOverlay(wall);
+        },
+
+        updateWalls(walls) {
+            console.log('[updateWalls] called with', walls.length, 'walls');
+            console.log('[updateWalls] standaloneNodeGroup children:', this.standaloneNodeGroup?.children.length || 0);
+            if (!Array.isArray(walls)) return;
+
+            this.latestWallData = walls.map((wall) =>
+                typeof wall === "object" ? { ...wall } : wall
+            );
+            this.wallOrdering = walls.map((w) => w.id);
+
+            const currentIds = new Set(walls.map((w) => w.id));
+            Object.keys(this.plateOverlays).forEach((id) => {
+                if (!currentIds.has(id) && !id.startsWith("temp_")) {
+                    this.removeWall(id);
+                }
+            });
+
+            walls.forEach((wall) => {
+                if (this.plateOverlays[wall.id]) {
+                    this.updatePlateOverlay(wall);
+                } else {
+                    this.addPlateOverlay(wall);
+                }
+            });
+
+            Object.keys(this.plateOverlays).forEach((id) => {
+                if (id.startsWith("temp_") && walls.length > 0) {
+                    this.removeWall(id);
+                }
+            });
+
+            this.refreshPlateLabels();
+            this.refreshPlateMeshAppearance();
+            this.refreshAllMeshOverlays();
+            this.refreshNodeLoadVisuals();
+        },
+
+        removeWall(wallId) {
+            const group = this.plateOverlays[wallId];
+            if (!group) return;
+            this.scene.remove(group);
+            this.disposeNodeContainer(group);
+            this.disposeMeshOverlay(group);
+            delete this.plateOverlays[wallId];
+            this.removePlateLabel(wallId);
+            this.removePlateMesh(wallId);
+            if (Array.isArray(this.wallOrdering)) {
+                this.wallOrdering = this.wallOrdering.filter((id) => id !== wallId);
+            }
+            this.updatePlateLabelVisibility();
+        },
+
+        deletePlateById(wallId) {
+            if (!wallId) return false;
+            if (!this.plateOverlays[wallId]) {
+                return false;
+            }
+            this.removeWall(wallId);
+            if (this.selectedWallId === wallId) {
+                this.selectedWallId = null;
+            }
+            dispatchViewportEvent("wallDeleted2D", { id: wallId });
+            this.updatePlateLabelVisibility();
+            return true;
+        },
+
+        clearAllWalls() {
+            Object.keys(this.plateOverlays).forEach((id) => this.removeWall(id));
+            if (this.standaloneNodeGroup) {
+                this.disposeNodeContainer(this.standaloneNodeGroup);
+            }
+            if (this.plateLabels) {
+                Object.keys(this.plateLabels).forEach((id) => this.removePlateLabel(id));
+            }
+            this.wallOrdering = [];
+            this.clearAllPlateMeshes();
+            this.latestWallData = [];
+        },
+
+        highlightWall(wallId) {
+            this.selectedWallId = wallId || null;
+            Object.entries(this.plateOverlays).forEach(([id, group]) => {
+                this.setPlateGroupAppearance(group, { highlighted: !!wallId && id === wallId });
+            });
+            this.updatePlateLabelVisibility();
+            this.updateAllPlateLabelPositions();
+            this.refreshPlateMeshAppearance();
+        },
+
+        applyStressPlot(stressData, maxStress, minStress) {
+            console.log('[NEW applyStressPlot] Starting fresh stress visualization');
+            console.log('  - Nodal stress count:', stressData.length);
+            console.log('  - Max stress:', maxStress);
+            console.log('  - Min stress:', minStress);
+            console.log('  - Current view mode:', this.is2D ? '2D' : '3D');
+
+            this.stressPlotActive = true;
+            this.nodalStressData = stressData;
+            this.maxStress = maxStress;
+            this.minStress = minStress;
+
+            if (typeof this.showStressLegend === "function") {
+                this.showStressLegend();
+            }
+
+            // Simple approach: Just color the existing mesh overlays
+            // If they don't exist, create them first
+            const walls = Array.isArray(this.latestWallData) ? this.latestWallData : [];
+            
+            walls.forEach(wall => {
+                if (this.is2D) {
+                    // Handle 2D view
+                    const group = this.plateOverlays[wall.id];
+                    if (!group) return;
+                    
+                    // Create mesh overlay if it doesn't exist
+                    if (!group.userData?.meshOverlay) {
+                        console.log('[NEW] Creating 2D mesh overlay for plate', wall.id);
+                        this.applyMeshOverlayToGroup(wall, group);
+                    }
+                    
+                    const meshOverlay = group.userData?.meshOverlay;
+                    if (meshOverlay) {
+                        console.log('[NEW] Applying stress colors to 2D mesh for plate', wall.id);
+                        meshOverlay.visible = true;
+                        this.applyNodalStressColorsToMeshOverlay(meshOverlay, stressData, maxStress, minStress);
+                        
+                        // Make plate transparent so stress shows
+                        group.children.forEach(child => {
+                            if (child.userData?.role === "fill" && child.material) {
+                                child.material.opacity = 0.1;
+                                child.material.needsUpdate = true;
+                            }
+                        });
+                    }
+                } else {
+                    // Handle 3D view
+                    console.log('[NEW 3D] Processing plate', wall.id);
+                    const entry = this.plateMeshes?.[wall.id];
+                    if (!entry) {
+                        console.warn('[NEW 3D] No entry found for plate', wall.id);
+                        console.log('[NEW 3D] Available plateMeshes:', Object.keys(this.plateMeshes || {}));
+                        return;
+                    }
+                    
+                    console.log('[NEW 3D] Entry found:', {
+                        hasGroup: !!entry.group,
+                        hasFill: !!entry.fill,
+                        hasMeshOverlay: !!entry.meshOverlay,
+                        fillOpacity: entry.fill?.material?.opacity,
+                        fillTransparent: entry.fill?.material?.transparent
+                    });
+                    
+                    // Create mesh overlay if it doesn't exist
+                    if (!entry.meshOverlay) {
+                        console.log('[NEW 3D] Creating 3D mesh overlay for plate', wall.id);
+                        this.applyMeshOverlayToPlateEntry(wall, entry);
+                        console.log('[NEW 3D] After creation, meshOverlay exists:', !!entry.meshOverlay);
+                    }
+                    
+                    const meshOverlay = entry.meshOverlay;
+                    if (meshOverlay) {
+                        console.log('[NEW 3D] Mesh overlay details:', {
+                            visible: meshOverlay.visible,
+                            childrenCount: meshOverlay.children.length,
+                            position: meshOverlay.position,
+                            hasParent: !!meshOverlay.parent
+                        });
+                        
+                        console.log('[NEW 3D] Applying stress colors to 3D mesh for plate', wall.id);
+                        meshOverlay.visible = true;
+                        this.applyNodalStressColorsToMeshOverlay(meshOverlay, stressData, maxStress, minStress);
+                        
+                        // Make plate mesh transparent so stress shows
+                        if (entry.fill && entry.fill.material) {
+                            console.log('[NEW 3D] Making 3D plate transparent for plate', wall.id);
+                            entry.fill.material.opacity = 0.1;
+                            entry.fill.material.transparent = true;
+                            entry.fill.material.needsUpdate = true;
+                            console.log('[NEW 3D] Fill material updated:', {
+                                opacity: entry.fill.material.opacity,
+                                transparent: entry.fill.material.transparent,
+                                visible: entry.fill.visible
+                            });
+                        } else {
+                            console.warn('[NEW 3D] No fill material found for 3D plate', wall.id, entry);
+                        }
+                    } else {
+                        console.error('[NEW 3D] No mesh overlay after creation attempt for plate', wall.id);
+                    }
+                }
+            });
+
+            console.log('[NEW applyStressPlot] DONE - Stress visualization applied');
+        },
+
+        clearStressPlot() {
+            console.log('[NEW clearStressPlot] Clearing stress visualization');
+            
+            this.stressPlotActive = false;
+            this.nodalStressData = null;
+            this.maxStress = null;
+            this.minStress = null;
+
+            const walls = Array.isArray(this.latestWallData) ? this.latestWallData : [];
+            
+            walls.forEach(wall => {
+                if (this.is2D) {
+                    // Restore 2D view
+                    const group = this.plateOverlays[wall.id];
+                    if (!group) return;
+                    
+                    const meshOverlay = group.userData?.meshOverlay;
+                    if (meshOverlay) {
+                        this.restoreOriginalMeshColors(meshOverlay);
+                        meshOverlay.visible = !!this.meshOverlayEnabled;
+                    }
+                    
+                    // Restore plate opacity
+                    group.children.forEach(child => {
+                        if (child.userData?.role === "fill" && child.material) {
+                            const highlighted = group.userData?.highlighted || false;
+                            child.material.opacity = highlighted ? this.highlightPlateOpacity : this.inactivePlateOpacity;
+                            child.material.needsUpdate = true;
+                        }
+                    });
+                } else {
+                    // Restore 3D view
+                    const entry = this.plateMeshes?.[wall.id];
+                    if (!entry) return;
+                    
+                    const meshOverlay = entry.meshOverlay;
+                    if (meshOverlay) {
+                        this.restoreOriginalMeshColors(meshOverlay);
+                        meshOverlay.visible = !!this.meshOverlayEnabled;
+                    }
+                    
+                    // Restore plate mesh opacity
+                    if (entry.fill && entry.fill.material) {
+                        entry.fill.material.opacity = 1.0;
+                        entry.fill.material.needsUpdate = true;
+                    }
+                }
+            });
+
+            console.log('[NEW clearStressPlot] DONE - Stress cleared, normal view restored');
+        },
+
+        applyNodalStressColorsToMeshOverlay(meshOverlay, nodalStressData, maxStress, minStress) {
+            if (!meshOverlay) return;
+
+            // Find the surface mesh
+            const surfaceMesh = meshOverlay.children.find(child => 
+                child.userData?.isNetgenMeshSurface
+            );
+            
+            if (!surfaceMesh || !surfaceMesh.geometry) return;
+
+            const geometry = surfaceMesh.geometry;
+            const colorAttribute = geometry.getAttribute('color');
+            const nodeIndexAttribute = geometry.getAttribute('nodeIndex');
+
+            if (!colorAttribute || !nodeIndexAttribute) {
+                console.warn('[applyNodalStressColorsToMeshOverlay] Missing required attributes');
+                return;
+            }
+
+            const colors = colorAttribute.array;
+            const nodeIndices = nodeIndexAttribute.array;
+
+            console.log('[applyNodalStressColorsToMeshOverlay] Applying smooth stress contours', {
+                numVertices: nodeIndices.length,
+                numNodalStresses: nodalStressData.length,
+                maxStress,
+                minStress
+            });
+
+            // CRITICAL FIX: Create a mapping from node ID to GLOBAL array index
+            // The nodalStressData array is indexed by the GLOBAL node array position (0, 1, 2, ...)
+            // But nodeIndices contains actual node IDs (which might be 1-based or non-sequential)
+            // We need to find which position each node ID has in the original GLOBAL mesh.nodes array
+            
+            let nodeIdToArrayIndex = this.nodeIdToGlobalIndex;
+            if (!nodeIdToArrayIndex) {
+                if (this.netgenMeshData && this.netgenMeshData.nodes) {
+                    nodeIdToArrayIndex = new Map();
+                    this.netgenMeshData.nodes.forEach((node, index) => {
+                        nodeIdToArrayIndex.set(node.id, index);
+                    });
+                    this.nodeIdToGlobalIndex = nodeIdToArrayIndex;
+                    console.log('[applyNodalStressColorsToMeshOverlay] Built global node ID mapping:', {
+                        numMappedNodes: nodeIdToArrayIndex.size
+                    });
+                } else {
+                    console.error('[applyNodalStressColorsToMeshOverlay] Global mesh data not available for mapping');
+                    return;
+                }
+            }
+
+            // Add small epsilon to avoid division issues with very small ranges
+            const epsilon = (maxStress - minStress) * 0.001;
+            const effectiveMin = minStress - epsilon;
+            const effectiveMax = maxStress + epsilon;
+
+            let appliedCount = 0;
+            let outOfBoundsCount = 0;
+            let zeroStressCount = 0;
+
+            // Apply stress color to each VERTEX based on its node ID
+            for (let i = 0; i < nodeIndices.length; i++) {
+                const nodeId = Math.floor(nodeIndices[i]);
+                
+                // Map node ID to array index
+                const arrayIndex = nodeIdToArrayIndex.get(nodeId);
+                
+                if (arrayIndex === undefined) {
+                    outOfBoundsCount++;
+                    if (outOfBoundsCount <= 5) {
+                        console.warn(`Node ID ${nodeId} not found in mapping`);
+                    }
+                    continue;
+                }
+                
+                // Check if array index is valid
+                if (arrayIndex < 0 || arrayIndex >= nodalStressData.length) {
+                    outOfBoundsCount++;
+                    if (outOfBoundsCount <= 5) {
+                        console.warn(`Array index ${arrayIndex} for node ID ${nodeId} out of bounds (max: ${nodalStressData.length - 1})`);
+                    }
+                    continue;
+                }
+                
+                const stress = nodalStressData[arrayIndex];
+                
+                // Count zero/very low stress values for debugging
+                if (Math.abs(stress) < 1e-6) {
+                    zeroStressCount++;
+                }
+                
+                if (!Number.isFinite(stress)) {
+                    continue;
+                }
+
+                // Normalize stress to 0-1 range with effective min/max
+                const normalizedStress = effectiveMax !== effectiveMin 
+                    ? Math.max(0, Math.min(1, (stress - effectiveMin) / (effectiveMax - effectiveMin)))
+                    : 0.5;
+
+                // Create color based on stress (blue = low -> red = high)
+                const color = this.getStressColor(normalizedStress);
+
+                // Apply color to this vertex
+                const colorIndex = i * 3;
+                colors[colorIndex] = color.r;
+                colors[colorIndex + 1] = color.g;
+                colors[colorIndex + 2] = color.b;
+                
+                appliedCount++;
+            }
+
+            console.log(`[applyNodalStressColorsToMeshOverlay] Applied smooth colors to ${appliedCount} vertices`);
+            console.log(`  - Zero/near-zero stress vertices: ${zeroStressCount}`);
+            console.log(`  - Out of bounds: ${outOfBoundsCount}`);
+
+            colorAttribute.needsUpdate = true;
+            
+            // Store stress data on the mesh for raycasting/tooltips
+            surfaceMesh.userData.nodalStressData = nodalStressData;
+            surfaceMesh.userData.nodeIdToGlobalIndex = nodeIdToArrayIndex;
+            surfaceMesh.userData.minStress = minStress;
+            surfaceMesh.userData.maxStress = maxStress;
+            
+            // Make the mesh more opaque and emissive when showing stress
+            if (surfaceMesh.material) {
+                console.log('[applyNodalStressColorsToMeshOverlay] Updating surface mesh material');
+                surfaceMesh.material.opacity = 0.98;
+                surfaceMesh.material.transparent = true;
+                surfaceMesh.material.depthWrite = true;  // Enable depth write for 3D
+                
+                // Add emissive for better visibility in 3D
+                if (surfaceMesh.material.emissive) {
+                    surfaceMesh.material.emissive.setRGB(0.1, 0.1, 0.1);
+                    surfaceMesh.material.emissiveIntensity = 0.3;
+                }
+                
+                surfaceMesh.material.needsUpdate = true;
+                console.log('[applyNodalStressColorsToMeshOverlay] Surface material updated:', {
+                    opacity: surfaceMesh.material.opacity,
+                    transparent: surfaceMesh.material.transparent,
+                    depthWrite: surfaceMesh.material.depthWrite
+                });
+            }
+            
+            // Also make edge lines brighter for better visibility
+            const edgeLines = meshOverlay.children.find(child => child.type === 'LineSegments');
+            if (edgeLines && edgeLines.material) {
+                edgeLines.material.opacity = 0.4;
+                edgeLines.material.color.set(0x444444);
+                edgeLines.material.needsUpdate = true;
+            }
+        },
+
+        getStressColor(t) {
+            // Create a stress color map with better contrast
+            // Blue (low) -> Cyan -> Green -> Yellow -> Orange -> Red (high)
+            const color = new THREE.Color();
+            
+            // Clamp to ensure we're in 0-1 range
+            t = Math.max(0, Math.min(1, t));
+            
+            if (t < 0.2) {
+                // Blue to Cyan (0.0 - 0.2)
+                const local = t / 0.2;
+                color.setRGB(0, local * 0.7, 1);
+            } else if (t < 0.4) {
+                // Cyan to Green (0.2 - 0.4)
+                const local = (t - 0.2) / 0.2;
+                color.setRGB(0, 0.7 + local * 0.3, 1 - local);
+            } else if (t < 0.6) {
+                // Green to Yellow (0.4 - 0.6)
+                const local = (t - 0.4) / 0.2;
+                color.setRGB(local, 1, 0);
+            } else if (t < 0.8) {
+                // Yellow to Orange (0.6 - 0.8)
+                const local = (t - 0.6) / 0.2;
+                color.setRGB(1, 1 - local * 0.3, 0);
+            } else {
+                // Orange to Red (0.8 - 1.0)
+                const local = (t - 0.8) / 0.2;
+                color.setRGB(1, 0.7 - local * 0.7, 0);
+            }
+            
+            return color;
+        },
+
+        restoreOriginalMeshColors(meshOverlay) {
+            if (!meshOverlay) return;
+
+            const surfaceMesh = meshOverlay.children.find(child => 
+                child.userData?.isNetgenMeshSurface
+            );
+            
+            if (!surfaceMesh || !surfaceMesh.geometry) return;
+
+            const geometry = surfaceMesh.geometry;
+            const colorAttribute = geometry.getAttribute('color');
+            const positionAttribute = geometry.getAttribute('position');
+            
+            if (!colorAttribute || !positionAttribute) return;
+
+            const colors = colorAttribute.array;
+            const positions = positionAttribute.array;
+
+            // Recalculate gradient based on Y position
+            let minY = Infinity;
+            let maxY = -Infinity;
+
+            for (let i = 0; i < positions.length; i += 3) {
+                const y = positions[i + 1];
+                minY = Math.min(minY, y);
+                maxY = Math.max(maxY, y);
+            }
+
+            const colorTop = new THREE.Color(0x00d9ff);    // Bright cyan
+            const colorBottom = new THREE.Color(0x667eea); // Purple-blue
+
+            for (let i = 0; i < positions.length; i += 3) {
+                const y = positions[i + 1];
+                const t = maxY !== minY ? (y - minY) / (maxY - minY) : 0.5;
+                const color = new THREE.Color().lerpColors(colorBottom, colorTop, t);
+                
+                const colorIndex = i;
+                colors[colorIndex] = color.r;
+                colors[colorIndex + 1] = color.g;
+                colors[colorIndex + 2] = color.b;
+            }
+
+            colorAttribute.needsUpdate = true;
+            
+            // Restore original opacity
+            if (surfaceMesh.material) {
+                surfaceMesh.material.opacity = 0.75; // 2D default
+                surfaceMesh.material.needsUpdate = true;
+            }
+            
+            // Restore original edge color
+            const edgeLines = meshOverlay.children.find(child => child.type === 'LineSegments');
+            if (edgeLines && edgeLines.material) {
+                edgeLines.material.opacity = 0.75;
+                edgeLines.material.color.set(0x00d9ff); // Cyan
+                edgeLines.material.needsUpdate = true;
+            }
+        },
+
+        // === POLYGON DRAWING METHODS ===
+        
+        initPolygonDrawing() {
+            this.polygonVertices = [];
+            this.polygonPreviewGroup = null;
+        },
+
+        addPolygonVertex(point) {
+            if (!point) return;
+            
+            // Initialize if needed
+            if (!this.polygonVertices) {
+                this.polygonVertices = [];
+            }
+
+            // Check if clicking near the first vertex to close the polygon
+            if (this.polygonVertices.length >= 3) {
+                const firstVertex = this.polygonVertices[0];
+                const dist = Math.hypot(point.x - firstVertex.x, point.y - firstVertex.y);
+                if (dist < 0.3) {
+                    // Close the polygon
+                    this.finalizePolygon();
+                    return;
+                }
+            }
+
+            // Add the vertex
+            this.polygonVertices.push(point.clone());
+            console.log(`Added polygon vertex ${this.polygonVertices.length}:`, point.x, point.y);
+
+            // Update preview
+            this.updatePolygonPreview(null);
+        },
+
+        updatePolygonPreview(currentPoint) {
+            if (!this.polygonVertices || this.polygonVertices.length === 0) return;
+
+            // Clear existing preview
+            this.clearPolygonPreview();
+
+            if (!this.scene) return;
+
+            const previewGroup = new THREE.Group();
+            previewGroup.name = "polygon-preview";
+
+            // Draw vertices
+            const vertexColor = 0x3b82f6;
+            const vertexGeometry = new THREE.CircleGeometry(0.1, 16);
+            const vertexMaterial = new THREE.MeshBasicMaterial({ 
+                color: vertexColor,
+                depthTest: false,
+                depthWrite: false 
+            });
+
+            this.polygonVertices.forEach((vertex, index) => {
+                const marker = new THREE.Mesh(vertexGeometry, vertexMaterial.clone());
+                marker.position.set(vertex.x, vertex.y, 0.005);
+                marker.renderOrder = 10;
+                previewGroup.add(marker);
+
+                // Add vertex label
+                if (this.createTextSprite) {
+                    const label = this.createTextSprite(`${index + 1}`);
+                    label.position.set(vertex.x + 0.2, vertex.y + 0.2, 0.006);
+                    label.scale.setScalar(0.3);
+                    previewGroup.add(label);
+                }
+            });
+
+            // Draw lines connecting vertices
+            const linePoints = [...this.polygonVertices];
+            if (currentPoint) {
+                linePoints.push(currentPoint);
+            }
+
+            if (linePoints.length >= 2) {
+                const lineGeometry = new THREE.BufferGeometry().setFromPoints(linePoints);
+                const lineMaterial = new THREE.LineBasicMaterial({ 
+                    color: 0x3b82f6,
+                    linewidth: 2,
+                    depthTest: false,
+                    depthWrite: false
+                });
+                const line = new THREE.Line(lineGeometry, lineMaterial);
+                line.renderOrder = 9;
+                previewGroup.add(line);
+
+                // Draw closing line if we have at least 3 vertices
+                if (this.polygonVertices.length >= 3 && !currentPoint) {
+                    const closingPoints = [
+                        this.polygonVertices[this.polygonVertices.length - 1],
+                        this.polygonVertices[0]
+                    ];
+                    const closingGeometry = new THREE.BufferGeometry().setFromPoints(closingPoints);
+                    const closingMaterial = new THREE.LineBasicMaterial({ 
+                        color: 0x94a3b8,
+                        linewidth: 1,
+                        opacity: 0.5,
+                        transparent: true,
+                        depthTest: false,
+                        depthWrite: false
+                    });
+                    const closingLine = new THREE.Line(closingGeometry, closingMaterial);
+                    closingLine.renderOrder = 8;
+                    previewGroup.add(closingLine);
+                }
+            }
+
+            // Draw filled polygon preview if we have at least 3 vertices
+            if (this.polygonVertices.length >= 3) {
+                const shape = new THREE.Shape();
+                shape.moveTo(this.polygonVertices[0].x, this.polygonVertices[0].y);
+                for (let i = 1; i < this.polygonVertices.length; i++) {
+                    shape.lineTo(this.polygonVertices[i].x, this.polygonVertices[i].y);
+                }
+                shape.closePath();
+
+                const fillGeometry = new THREE.ShapeGeometry(shape);
+                const fillMaterial = new THREE.MeshBasicMaterial({ 
+                    color: 0x3b82f6,
+                    transparent: true,
+                    opacity: 0.15,
+                    side: THREE.DoubleSide,
+                    depthTest: false,
+                    depthWrite: false
+                });
+                const fillMesh = new THREE.Mesh(fillGeometry, fillMaterial);
+                fillMesh.position.z = 0.002;
+                fillMesh.renderOrder = 7;
+                previewGroup.add(fillMesh);
+            }
+
+            // Highlight first vertex if close enough to close
+            if (currentPoint && this.polygonVertices.length >= 3) {
+                const firstVertex = this.polygonVertices[0];
+                const dist = Math.hypot(currentPoint.x - firstVertex.x, currentPoint.y - firstVertex.y);
+                if (dist < 0.3) {
+                    const highlightGeometry = new THREE.RingGeometry(0.12, 0.18, 32);
+                    const highlightMaterial = new THREE.MeshBasicMaterial({ 
+                        color: 0x10b981,
+                        depthTest: false,
+                        depthWrite: false
+                    });
+                    const highlight = new THREE.Mesh(highlightGeometry, highlightMaterial);
+                    highlight.position.set(firstVertex.x, firstVertex.y, 0.006);
+                    highlight.renderOrder = 11;
+                    previewGroup.add(highlight);
+                }
+            }
+
+            this.scene.add(previewGroup);
+            this.polygonPreviewGroup = previewGroup;
+        },
+
+        clearPolygonPreview() {
+            if (this.polygonPreviewGroup) {
+                this.polygonPreviewGroup.children.forEach(child => {
+                    if (child.geometry) child.geometry.dispose();
+                    if (child.material) {
+                        if (Array.isArray(child.material)) {
+                            child.material.forEach(m => m.dispose());
+                        } else {
+                            child.material.dispose();
+                        }
+                    }
+                });
+                if (this.scene) {
+                    this.scene.remove(this.polygonPreviewGroup);
+                }
+                this.polygonPreviewGroup = null;
+            }
+        },
+
+        finalizePolygon() {
+            if (!this.polygonVertices || this.polygonVertices.length < 3) {
+                console.warn('Need at least 3 vertices to create a polygon');
+                return;
+            }
+
+            console.log('Finalizing polygon with', this.polygonVertices.length, 'vertices');
+
+            // Convert to plain coordinate array
+            const vertices = this.polygonVertices.map(v => [v.x, v.y]);
+
+            // Dispatch event to Rust
+            if (global.window) {
+                try {
+                    const detail = JSON.stringify({ vertices });
+                    global.window.dispatchEvent(new CustomEvent('polygonCreated', { detail }));
+                } catch (err) {
+                    console.error('Failed to dispatch polygonCreated event', err);
+                }
+            }
+
+            // Clear drawing state
+            this.clearPolygonPreview();
+            this.polygonVertices = [];
+            this.hideCoordsLabel();
+        },
+
+        cancelPolygonDrawing() {
+            console.log('Canceling polygon drawing');
+            this.clearPolygonPreview();
+            this.polygonVertices = [];
+            this.hideCoordsLabel();
+        },
+
+        // === VOID (HOLE) DRAWING METHODS ===
+        
+        initVoidDrawing(polygonId) {
+            this.voidVertices = [];
+            this.voidPolygonId = polygonId;
+            this.voidPreviewGroup = null;
+        },
+
+        addVoidVertex(point) {
+            if (!point) return;
+            
+            if (!this.voidVertices) {
+                this.voidVertices = [];
+            }
+
+            // Check if clicking near the first vertex to close the void
+            if (this.voidVertices.length >= 3) {
+                const firstVertex = this.voidVertices[0];
+                const dist = Math.hypot(point.x - firstVertex.x, point.y - firstVertex.y);
+                if (dist < 0.5) {
+                    this.finalizeVoid();
+                    return;
+                }
+            }
+
+            this.voidVertices.push(point.clone());
+            console.log(`Added void vertex ${this.voidVertices.length}:`, point.x, point.y);
+            this.updateVoidPreview(null);
+        },
+
+        updateVoidPreview(currentPoint) {
+            if (!this.voidVertices || this.voidVertices.length === 0) return;
+
+            this.clearVoidPreview();
+
+            if (!this.scene) return;
+
+            const previewGroup = new THREE.Group();
+            previewGroup.name = "void-preview";
+
+            // Draw vertices
+            const vertexColor = 0xef4444;
+            const vertexGeometry = new THREE.CircleGeometry(0.1, 16);
+            const vertexMaterial = new THREE.MeshBasicMaterial({ 
+                color: vertexColor,
+                depthTest: false,
+                depthWrite: false 
+            });
+
+            this.voidVertices.forEach((vertex, index) => {
+                const marker = new THREE.Mesh(vertexGeometry, vertexMaterial.clone());
+                marker.position.set(vertex.x, vertex.y, 0.006);
+                marker.renderOrder = 12;
+                previewGroup.add(marker);
+            });
+
+            // Draw lines
+            const linePoints = [...this.voidVertices];
+            if (currentPoint) {
+                linePoints.push(currentPoint);
+            }
+
+            if (linePoints.length >= 2) {
+                const lineGeometry = new THREE.BufferGeometry().setFromPoints(linePoints);
+                const lineMaterial = new THREE.LineBasicMaterial({ 
+                    color: 0xef4444,
+                    linewidth: 2,
+                    depthTest: false,
+                    depthWrite: false
+                });
+                const line = new THREE.Line(lineGeometry, lineMaterial);
+                line.renderOrder = 11;
+                previewGroup.add(line);
+
+                if (this.voidVertices.length >= 3 && !currentPoint) {
+                    const closingPoints = [
+                        this.voidVertices[this.voidVertices.length - 1],
+                        this.voidVertices[0]
+                    ];
+                    const closingGeometry = new THREE.BufferGeometry().setFromPoints(closingPoints);
+                    const closingMaterial = new THREE.LineBasicMaterial({ 
+                        color: 0xfca5a5,
+                        linewidth: 1,
+                        opacity: 0.5,
+                        transparent: true,
+                        depthTest: false,
+                        depthWrite: false
+                    });
+                    const closingLine = new THREE.Line(closingGeometry, closingMaterial);
+                    closingLine.renderOrder = 10;
+                    previewGroup.add(closingLine);
+                }
+            }
+
+            // Draw filled void preview
+            if (this.voidVertices.length >= 3) {
+                const shape = new THREE.Shape();
+                shape.moveTo(this.voidVertices[0].x, this.voidVertices[0].y);
+                for (let i = 1; i < this.voidVertices.length; i++) {
+                    shape.lineTo(this.voidVertices[i].x, this.voidVertices[i].y);
+                }
+                shape.closePath();
+
+                const fillGeometry = new THREE.ShapeGeometry(shape);
+                const fillMaterial = new THREE.MeshBasicMaterial({ 
+                    color: 0xef4444,
+                    transparent: true,
+                    opacity: 0.2,
+                    side: THREE.DoubleSide,
+                    depthTest: false,
+                    depthWrite: false
+                });
+                const fillMesh = new THREE.Mesh(fillGeometry, fillMaterial);
+                fillMesh.position.z = 0.004;
+                fillMesh.renderOrder = 9;
+                previewGroup.add(fillMesh);
+            }
+
+            // Highlight first vertex if close
+            if (currentPoint && this.voidVertices.length >= 3) {
+                const firstVertex = this.voidVertices[0];
+                const dist = Math.hypot(currentPoint.x - firstVertex.x, currentPoint.y - firstVertex.y);
+                if (dist < 0.3) {
+                    const highlightGeometry = new THREE.RingGeometry(0.12, 0.18, 32);
+                    const highlightMaterial = new THREE.MeshBasicMaterial({ 
+                        color: 0x10b981,
+                        depthTest: false,
+                        depthWrite: false
+                    });
+                    const highlight = new THREE.Mesh(highlightGeometry, highlightMaterial);
+                    highlight.position.set(firstVertex.x, firstVertex.y, 0.007);
+                    highlight.renderOrder = 13;
+                    previewGroup.add(highlight);
+                }
+            }
+
+            this.scene.add(previewGroup);
+            this.voidPreviewGroup = previewGroup;
+        },
+
+        clearVoidPreview() {
+            if (this.voidPreviewGroup) {
+                this.voidPreviewGroup.children.forEach(child => {
+                    if (child.geometry) child.geometry.dispose();
+                    if (child.material) {
+                        if (Array.isArray(child.material)) {
+                            child.material.forEach(m => m.dispose());
+                        } else {
+                            child.material.dispose();
+                        }
+                    }
+                });
+                if (this.scene) {
+                    this.scene.remove(this.voidPreviewGroup);
+                }
+                this.voidPreviewGroup = null;
+            }
+        },
+
+        finalizeVoid() {
+            if (!this.voidVertices || this.voidVertices.length < 3) {
+                console.warn('Need at least 3 vertices to create a void');
+                return;
+            }
+
+            if (!this.voidPolygonId) {
+                console.warn('No polygon selected for void');
+                return;
+            }
+
+            console.log('Finalizing void with', this.voidVertices.length, 'vertices for polygon', this.voidPolygonId);
+
+            const vertices = this.voidVertices.map(v => [v.x, v.y]);
+
+            if (global.window) {
+                try {
+                    const detail = JSON.stringify({ 
+                        polygonId: this.voidPolygonId,
+                        vertices 
+                    });
+                    global.window.dispatchEvent(new CustomEvent('voidCreated', { detail }));
+                } catch (err) {
+                    console.error('Failed to dispatch voidCreated event', err);
+                }
+            }
+
+            this.clearVoidPreview();
+            this.voidVertices = [];
+            this.voidPolygonId = null;
+            this.hideCoordsLabel();
+        },
+
+        cancelVoidDrawing() {
+            console.log('Canceling void drawing');
+            this.clearVoidPreview();
+            this.voidVertices = [];
+            this.voidPolygonId = null;
+            this.hideCoordsLabel();
+        },
+
+        // === FILLET CORNER METHODS ===
+        
+        applyFilletToVertex(vertexMesh) {
+            if (!vertexMesh || !vertexMesh.userData) return;
+
+            const polygonId = vertexMesh.userData.polygonId;
+            const vertexIndex = vertexMesh.userData.vertexIndex;
+
+            if (!polygonId || vertexIndex === undefined) return;
+
+            const radius = this.filletRadius || 0.2;
+
+            console.log(`Applying fillet to polygon ${polygonId}, vertex ${vertexIndex}, radius ${radius}`);
+
+            if (global.window) {
+                try {
+                    const detail = JSON.stringify({ 
+                        polygonId,
+                        vertexIndex,
+                        radius
+                    });
+                    global.window.dispatchEvent(new CustomEvent('filletApplied', { detail }));
+                } catch (err) {
+                    console.error('Failed to dispatch filletApplied event', err);
+                }
+            }
+
+            // Visual feedback
+            const originalScale = vertexMesh.scale.x;
+            vertexMesh.scale.setScalar(originalScale * 1.3);
+            setTimeout(() => {
+                if (vertexMesh.scale) {
+                    vertexMesh.scale.setScalar(originalScale);
+                }
+            }, 200);
+        },
+
+        setFilletRadius(radius) {
+            this.filletRadius = Math.max(0.05, parseFloat(radius) || 0.2);
+        },
+
+        applyMeshOverlayToPolygonGroup(polygon, group) {
+            if (!group) return;
+            
+            // Check if we have Netgen mesh data for this polygon
+            const polygonMesh = this.netgenPolygonMeshes?.[polygon.id];
+            if (!polygonMesh || !polygonMesh.nodes || !polygonMesh.elements) {
+                return;
+            }
+
+            // Dispose existing mesh overlay if any
+            const existingOverlay = group.getObjectByName("polygon-mesh-overlay");
+            if (existingOverlay) {
+                group.remove(existingOverlay);
+                // dispose geometry/material...
+                existingOverlay.traverse(child => {
+                    if (child.geometry) child.geometry.dispose();
+                    if (child.material) {
+                        if (Array.isArray(child.material)) {
+                            child.material.forEach(m => m.dispose());
+                        } else {
+                            child.material.dispose();
+                        }
+                    }
+                });
+            }
+
+            const shouldCreateMesh = this.meshOverlayEnabled || this.stressPlotActive;
+            if (!shouldCreateMesh) return;
+
+            const overlay = new THREE.Group();
+            overlay.name = "polygon-mesh-overlay";
+            overlay.renderOrder = 50;
+
+            // Create node markers (Green Crosses)
+            const nodePositions = [];
+            const nodeIds = [];
+            const nodeMap = new Map(); // Map node ID to local coordinates
+
+            polygonMesh.nodes.forEach((node) => {
+                const x = node.x;
+                const y = node.y;
+                const z = 0.012;
+                nodeMap.set(node.id, [x, y, z]);
+
+                nodePositions.push(x, y, z + 0.005);
+                nodeIds.push(node.id);
+            });
+
+            // Create texture for points if not exists
+            if (!this._plusTexture) {
+                const canvas = document.createElement('canvas');
+                canvas.width = 64;
+                canvas.height = 64;
+                const ctx = canvas.getContext('2d');
+                ctx.clearRect(0,0,64,64);
+                ctx.strokeStyle = '#00ff00'; // Green
+                ctx.lineWidth = 8;
+                ctx.beginPath();
+                ctx.moveTo(32, 10);
+                ctx.lineTo(32, 54);
+                ctx.moveTo(10, 32);
+                ctx.lineTo(54, 32);
+                ctx.stroke();
+                this._plusTexture = new THREE.CanvasTexture(canvas);
+            }
+
+            const pointsGeometry = new THREE.BufferGeometry();
+            pointsGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(nodePositions), 3));
+            
+            const pointsMaterial = new THREE.PointsMaterial({
+                map: this._plusTexture,
+                size: 0.15,
+                transparent: true,
+                depthTest: false,
+                depthWrite: false,
+                sizeAttenuation: true
+            });
+
+            const points = new THREE.Points(pointsGeometry, pointsMaterial);
+            points.renderOrder = 55;
+            points.userData = {
+                isMeshNodes: true,
+                nodeIds: nodeIds,
+                polygonId: polygon.id
+            };
+            overlay.add(points);
+
+            // Create mesh elements
+            const positions = [];
+            const colors = [];
+            const nodeIndices = [];
+            
+            const feaColor = new THREE.Color(0x4a90e2); // Vibrant blue
+            const colorTop = new THREE.Color(0x00d9ff);    // Bright cyan
+            const colorBottom = new THREE.Color(0x667eea); // Purple-blue
+
+            polygonMesh.elements.forEach((element) => {
+                if (!element.node_ids || element.node_ids.length < 3) return;
+                
+                const coords = element.node_ids.map(id => nodeMap.get(id)).filter(Boolean);
+                if (coords.length < 3) return;
+
+                // Triangulate if quad
+                const triangles = [];
+                if (coords.length === 3) {
+                    triangles.push([0, 1, 2]);
+                } else if (coords.length === 4) {
+                    triangles.push([0, 1, 2]);
+                    triangles.push([0, 2, 3]);
+                }
+
+                triangles.forEach(tri => {
+                    tri.forEach(idx => {
+                        const coord = coords[idx];
+                        positions.push(coord[0], coord[1], coord[2]);
+                        nodeIndices.push(element.node_ids[idx]);
+                        
+                        // Use solid color for now, stress plot logic will update colors later
+                        colors.push(feaColor.r, feaColor.g, feaColor.b);
+                    });
+                });
+            });
+
+            const geometry = new THREE.BufferGeometry();
+            geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+            geometry.setAttribute('nodeIndex', new THREE.Float32BufferAttribute(nodeIndices, 1));
+
+            const material = new THREE.MeshBasicMaterial({
+                vertexColors: true,
+                side: THREE.DoubleSide,
+                transparent: false,
+                depthTest: true,
+                depthWrite: true
+            });
+
+            const mesh = new THREE.Mesh(geometry, material);
+            mesh.userData = { 
+                isNetgenMeshSurface: true,
+                polygonId: polygon.id
+            };
+            mesh.raycast = THREE.Mesh.prototype.raycast; // Ensure raycasting works
+            overlay.add(mesh);
+
+            // Wireframe
+            const wireframe = new THREE.WireframeGeometry(geometry);
+            const line = new THREE.LineSegments(wireframe);
+            line.material.color.setHex(0x000000);
+            line.material.transparent = false;
+            line.material.linewidth = 2;
+            overlay.add(line);
+
+            group.add(overlay);
+            group.userData.meshOverlay = overlay;
+        },
+
+        // Render existing polygons
+        renderPolygon(polygon) {
+            if (!polygon || !polygon.id || !polygon.vertices || polygon.vertices.length < 3) {
+                return;
+            }
+
+            // Create polygon overlay group
+            if (!this.polygonOverlays) {
+                this.polygonOverlays = {};
+            }
+
+            // Remove existing if present
+            if (this.polygonOverlays[polygon.id]) {
+                this.removePolygon(polygon.id);
+            }
+
+            const group = new THREE.Group();
+            group.name = `polygon-${polygon.id}`;
+            group.userData = { polygonId: polygon.id, type: 'polygon' };
+
+            // Create shape from vertices
+            const shape = new THREE.Shape();
+            shape.moveTo(polygon.vertices[0][0], polygon.vertices[0][1]);
+            for (let i = 1; i < polygon.vertices.length; i++) {
+                shape.lineTo(polygon.vertices[i][0], polygon.vertices[i][1]);
+            }
+            shape.closePath();
+
+            // Add voids (holes)
+            if (polygon.voids && polygon.voids.length > 0) {
+                polygon.voids.forEach(void_poly => {
+                    if (void_poly.vertices && void_poly.vertices.length >= 3) {
+                        const holePath = new THREE.Path();
+                        holePath.moveTo(void_poly.vertices[0][0], void_poly.vertices[0][1]);
+                        for (let i = 1; i < void_poly.vertices.length; i++) {
+                            holePath.lineTo(void_poly.vertices[i][0], void_poly.vertices[i][1]);
+                        }
+                        holePath.closePath();
+                        shape.holes.push(holePath);
+                    }
+                });
+            }
+
+            // Add void vertex markers
+            if (polygon.voids && polygon.voids.length > 0) {
+                polygon.voids.forEach((voidPoly, voidIndex) => {
+                    if (voidPoly.vertices) {
+                        voidPoly.vertices.forEach((vertex, vIndex) => {
+                             const marker = this.createNodeMarker(vertex[0], vertex[1], 0.003, {
+                                userData: {
+                                    type: 'polygon-vertex',
+                                    polygonId: polygon.id,
+                                    voidIndex: voidIndex,
+                                    vertexIndex: vIndex,
+                                    isVoid: true
+                                },
+                                color: 0xef4444 // Red for void vertices
+                            });
+                            group.add(marker);
+                        });
+                    }
+                });
+            }
+
+            // Create filled mesh
+            const fillGeometry = new THREE.ShapeGeometry(shape);
+            const fillColor = this.selectedPolygonId === polygon.id ? 
+                (this.highlightPlateColor || 0x3b82f6) : 
+                (this.basePlateColor || 0x94a3b8);
+            const fillMaterial = new THREE.MeshBasicMaterial({ 
+                color: fillColor,
+                transparent: true,
+                opacity: 0.3,
+                side: THREE.DoubleSide,
+                depthTest: false,
+                depthWrite: false
+            });
+            const fillMesh = new THREE.Mesh(fillGeometry, fillMaterial);
+            fillMesh.position.z = 0.001;
+            fillMesh.renderOrder = 2;
+            fillMesh.userData = { role: 'fill', polygonId: polygon.id };
+            group.add(fillMesh);
+
+            // Create outline
+            const outlinePoints = polygon.vertices.map(v => new THREE.Vector3(v[0], v[1], 0));
+            outlinePoints.push(outlinePoints[0].clone()); // Close the loop
+            const outlineGeometry = new THREE.BufferGeometry().setFromPoints(outlinePoints);
+            const outlineMaterial = new THREE.LineBasicMaterial({ 
+                color: 0x1e293b,
+                linewidth: 2,
+                depthTest: false,
+                depthWrite: false
+            });
+            const outlineLine = new THREE.Line(outlineGeometry, outlineMaterial);
+            outlineLine.position.z = 0.002;
+            outlineLine.renderOrder = 3;
+            group.add(outlineLine);
+
+            // Add vertex markers
+            polygon.vertices.forEach((vertex, index) => {
+                const marker = this.createNodeMarker(vertex[0], vertex[1], 0.003, {
+                    userData: {
+                        type: 'polygon-vertex',
+                        polygonId: polygon.id,
+                        vertexIndex: index
+                    }
+                });
+                group.add(marker);
+            });
+
+            // Position the group
+            const pos = polygon.position || [0, 0, 0];
+            group.position.set(pos[0], pos[1], pos[2]);
+
+            this.scene.add(group);
+            this.polygonOverlays[polygon.id] = group;
+
+            // Apply mesh overlay if available
+            this.applyMeshOverlayToPolygonGroup(polygon, group);
+        },
+
+        removePolygon(polygonId) {
+            if (!this.polygonOverlays || !polygonId) return;
+            
+            const group = this.polygonOverlays[polygonId];
+            if (!group) return;
+
+            group.children.forEach(child => {
+                if (child.geometry) child.geometry.dispose();
+                if (child.material) {
+                    if (Array.isArray(child.material)) {
+                        child.material.forEach(m => m.dispose());
+                    } else {
+                        child.material.dispose();
+                    }
+                }
+            });
+
+            if (this.scene) {
+                this.scene.remove(group);
+            }
+
+            delete this.polygonOverlays[polygonId];
+        },
+
+        updatePolygons(polygons) {
+            if (!polygons) return;
+            
+            // Initialize polygonOverlays if needed
+            if (!this.polygonOverlays) {
+                this.polygonOverlays = {};
+            }
+
+            // Remove polygons that no longer exist
+            const currentIds = new Set(polygons.map(p => p.id));
+            Object.keys(this.polygonOverlays).forEach(id => {
+                if (!currentIds.has(id)) {
+                    this.removePolygon(id);
+                }
+            });
+
+            // Add or update polygons
+            polygons.forEach(polygon => {
+                this.renderPolygon(polygon);
+            });
+        },
+    });
+    }
+})(window);

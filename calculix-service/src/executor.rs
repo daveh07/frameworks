@@ -1,0 +1,489 @@
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use tempfile::TempDir;
+use uuid::Uuid;
+
+use crate::models::{AnalysisResults, StructuralModel, NodeDisplacement, NodeReaction, ElementStress, BeamForces};
+
+pub struct CalculiXExecutor {
+    work_dir: PathBuf,
+}
+
+impl CalculiXExecutor {
+    pub fn new() -> Self {
+        Self {
+            work_dir: std::env::temp_dir().join("calculix_work"),
+        }
+    }
+
+    pub async fn execute(
+        &mut self,
+        model: &StructuralModel,
+        inp_content: &str,
+    ) -> Result<AnalysisResults, ExecutorError> {
+        // Create a unique temporary directory for this analysis
+        let analysis_id = Uuid::new_v4();
+        let temp_dir = TempDir::new().map_err(|e| ExecutorError::IoError(e.to_string()))?;
+        let work_path = temp_dir.path();
+
+        tracing::info!("Starting analysis {} in {:?}", analysis_id, work_path);
+
+        // Write the .inp file
+        let inp_path = work_path.join("analysis.inp");
+        fs::write(&inp_path, inp_content)
+            .map_err(|e| ExecutorError::IoError(format!("Failed to write .inp file: {}", e)))?;
+
+        Self::maybe_export_debug_file(&inp_path, &analysis_id, "inp");
+
+        // Run CalculiX (ccx)
+        // Note: ccx expects the job name WITHOUT extension
+        let job_name = "analysis";
+        let ccx_path = std::env::var("CALCULIX_PATH").unwrap_or_else(|_| "ccx".to_string());
+
+        tracing::info!("Running command: {} {}", ccx_path, job_name);
+
+        let output = Command::new(&ccx_path)
+            .arg(job_name)
+            .current_dir(work_path)
+            .output()
+            .map_err(|e| ExecutorError::ExecutionError(format!("Failed to execute ccx: {}", e)))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            tracing::error!("CalculiX failed. Stderr: {}\nStdout: {}", stderr, stdout);
+            return Err(ExecutorError::AnalysisFailed(format!(
+                "CalculiX exited with status {}. Check logs.",
+                output.status
+            )));
+        }
+
+        // Parse results from the .dat file
+        let results = self.parse_dat_results(work_path, model)?;
+
+        // Export the resulting .dat for debugging if requested
+        let dat_path = work_path.join("analysis.dat");
+        if dat_path.exists() {
+            Self::maybe_export_debug_file(&dat_path, &analysis_id, "dat");
+        }
+
+        Ok(results)
+    }
+
+    fn maybe_export_debug_file(path: &Path, analysis_id: &Uuid, extension: &str) {
+        if let Ok(dest_dir) = std::env::var("CALCULIX_DEBUG_EXPORT") {
+            let dest_path = PathBuf::from(dest_dir);
+            if let Err(err) = fs::create_dir_all(&dest_path) {
+                tracing::warn!("Failed to create debug export directory {:?}: {}", dest_path, err);
+                return;
+            }
+
+            let file_name = format!("analysis_{}.{}", analysis_id, extension);
+            let dest_file = dest_path.join(file_name);
+            if let Err(err) = fs::copy(path, &dest_file) {
+                tracing::warn!("Failed to export debug file {:?}: {}", dest_file, err);
+            } else {
+                tracing::info!("Exported debug file to {:?}", dest_file);
+            }
+        }
+    }
+
+    fn parse_dat_results(
+        &self,
+        work_path: &std::path::Path,
+        model: &StructuralModel,
+    ) -> Result<AnalysisResults, ExecutorError> {
+        let dat_path = work_path.join("analysis.dat");
+        if !dat_path.exists() {
+            return Err(ExecutorError::AnalysisFailed("No .dat file generated".to_string()));
+        }
+
+        let content = fs::read_to_string(&dat_path)
+            .map_err(|e| ExecutorError::IoError(format!("Failed to read .dat file: {}", e)))?;
+
+        // DEBUG: Print first 200 lines of .dat file to logs
+        tracing::info!("--- .dat file content (first 200 lines) ---");
+        for (i, line) in content.lines().take(200).enumerate() {
+            tracing::info!("{:03}: {}", i + 1, line);
+        }
+        tracing::info!("--- end of .dat preview ---");
+
+        let mut results = AnalysisResults {
+            displacements: Vec::new(),
+            reactions: Vec::new(),
+            stresses: Vec::new(),
+            beam_forces: Vec::new(),
+            max_displacement: 0.0,
+            max_stress: 0.0,
+        };
+
+        // Calculate max original node ID to distinguish top/bottom nodes
+        // CalculiX uses 1-based indexing, so we add 1 to our 0-based IDs
+        let max_original_id = model.nodes.iter().map(|n| n.id + 1).max().unwrap_or(0);
+        tracing::info!("Max original node ID: {}", max_original_id);
+
+        // Intermediate storage for element stresses: CalculiX Element ID -> Vec<ElementStress>
+        let mut element_stresses: std::collections::HashMap<usize, Vec<crate::models::ElementStress>> = std::collections::HashMap::new();
+        let mut seen_node_ids: std::collections::HashSet<usize> = std::collections::HashSet::new();
+
+        let mut current_section = ""; // "displacements", "forces", "stresses", "beam_sf"
+
+        for line in content.lines() {
+            let line_lower = line.to_lowercase();
+            
+            // Detect sections
+            if line_lower.contains("displacements") && line_lower.contains("vx") {
+                current_section = "displacements";
+                tracing::info!("Found displacements section: {}", line);
+                seen_node_ids.clear(); // Reset for new displacement section
+                continue;
+            } else if line_lower.contains("total forces") && line_lower.contains("fx") {
+                current_section = "forces";
+                tracing::info!("Found forces section: {}", line);
+                continue;
+            } else if line_lower.contains("section forces") || (line_lower.contains("sf1") && line_lower.contains("sf2")) {
+                current_section = "beam_sf";
+                tracing::info!("Found beam section forces section: {}", line);
+                continue;
+            } else if line_lower.contains("stresses") {
+                current_section = "stresses";
+                tracing::info!("Found stresses section: {}", line);
+                continue;
+            }
+
+            // Skip headers or empty lines
+            if line.trim().is_empty() {
+                continue;
+            }
+            
+            // Skip header lines that contain text
+            if line.trim().chars().next().map_or(false, |c| !c.is_numeric() && c != '-') {
+                continue;
+            }
+
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            
+            match current_section {
+                "displacements" => {
+                    // Format: node_id dx dy dz
+                    if parts.len() >= 4 {
+                        if let (Ok(id), Ok(dx), Ok(dy), Ok(dz)) = (
+                            parts[0].parse::<usize>(),
+                            parts[1].parse::<f64>(),
+                            parts[2].parse::<f64>(),
+                            parts[3].parse::<f64>(),
+                        ) {
+                            // Skip duplicate node IDs (CalculiX may output displacements multiple times)
+                            if seen_node_ids.contains(&id) {
+                                continue;
+                            }
+                            seen_node_ids.insert(id);
+
+                            let disp_mag = (dx*dx + dy*dy + dz*dz).sqrt();
+                            if disp_mag > results.max_displacement {
+                                results.max_displacement = disp_mag;
+                            }
+
+                            results.displacements.push(NodeDisplacement {
+                                node_id: id - 1, // Convert from 1-based to 0-based
+                                dx, dy, dz,
+                                rx: 0.0, ry: 0.0, rz: 0.0,
+                            });
+                        }
+                    }
+                },
+                "forces" => {
+                    // Format: node_id fx fy fz
+                    if parts.len() >= 4 {
+                        if let (Ok(id), Ok(fx), Ok(fy), Ok(fz)) = (
+                            parts[0].parse::<usize>(),
+                            parts[1].parse::<f64>(),
+                            parts[2].parse::<f64>(),
+                            parts[3].parse::<f64>(),
+                        ) {
+                            results.reactions.push(NodeReaction {
+                                node_id: id - 1, // Convert from 1-based to 0-based
+                                fx, fy, fz,
+                                mx: 0.0, my: 0.0, mz: 0.0,
+                            });
+                        }
+                    }
+                },
+                "beam_sf" => {
+                    // Format for *EL PRINT, SF: element_id int_pt SF1 SF2 SF3 SF4 SF5 SF6
+                    // SF1=N (axial), SF2=Vy, SF3=Vz, SF4=T (torsion), SF5=My, SF6=Mz
+                    if parts.len() >= 8 {
+                        if let Ok(elem_id) = parts[0].parse::<usize>() {
+                            // Parse section force values (skip integration point)
+                            let mut sf_values = vec![];
+                            for part in &parts[2..] {
+                                if let Ok(val) = part.parse::<f64>() {
+                                    sf_values.push(val);
+                                } else {
+                                    break;
+                                }
+                            }
+                            
+                            if sf_values.len() >= 6 {
+                                results.beam_forces.push(BeamForces {
+                                    element_id: elem_id - 1, // Convert to 0-based
+                                    axial_force: sf_values[0],
+                                    shear_y: sf_values[1],
+                                    shear_z: sf_values[2],
+                                    torsion: sf_values[3],
+                                    moment_y: sf_values[4],
+                                    moment_z: sf_values[5],
+                                });
+                            }
+                        }
+                    }
+                },
+                "stresses" => {
+                    // Format for *EL PRINT ... OUTPUT=3D: element_id int_pt sxx syy szz sxy syz szx
+                    
+                    if parts.len() < 8 {
+                        continue;
+                    }
+                    
+                    if let (Ok(elem_id), Ok(int_pt)) = (parts[0].parse::<usize>(), parts[1].parse::<usize>()) {
+                        // Parse stress components
+                        let mut numeric_parts = vec![];
+                        for part in &parts[2..] {
+                            if let Ok(val) = part.parse::<f64>() {
+                                numeric_parts.push(val);
+                            } else {
+                                break;
+                            }
+                        }
+                        
+                        if numeric_parts.len() >= 6 {
+                            let sxx = numeric_parts[0];
+                            let syy = numeric_parts[1];
+                            let szz = numeric_parts[2];
+                            let sxy = numeric_parts[3];
+                            let syz = numeric_parts[4];
+                            let szx = numeric_parts[5];
+                            
+                            // Von Mises stress (always positive magnitude - this is the correct definition)
+                            let vm = (0.5 * ((sxx-syy).powi(2) + (syy-szz).powi(2) + (szz-sxx).powi(2) + 6.0*(sxy.powi(2) + syz.powi(2) + szx.powi(2)))).sqrt();
+                            
+                            // Store element stress data
+                            // We'll process this after reading all lines to determine Top/Bottom layers
+                            element_stresses.entry(elem_id)
+                                .or_insert_with(Vec::new)
+                                .push(ElementStress {
+                                    element_id: elem_id,
+                                    integration_point: int_pt,
+                                    von_mises: vm, // Von Mises is always positive
+                                    sxx, syy, szz, sxy, syz, szx,
+                                });
+                        }
+                    }
+                },
+                _ => {}
+            }
+        }
+
+        tracing::info!("Parsed {} nodal stress entries from .dat file", element_stresses.len());
+        
+        // DEBUG: Log some details about parsed stresses
+        if element_stresses.is_empty() {
+            tracing::warn!("NO STRESSES FOUND - checking .dat file sections");
+        } else {
+            tracing::info!("Sample nodal stresses: {:?}", element_stresses.iter().take(2).collect::<Vec<_>>());
+            // Log layer distribution for first few nodes
+            if let Some(stresses) = element_stresses.get(&1) {
+                tracing::info!("Node 1 has {} layers: {:?}",
+                    stresses.len(),
+                    stresses.iter().map(|s| (s.integration_point, format!("{:.2} MPa", s.von_mises/1e6))).collect::<Vec<_>>()
+                );
+            }
+        }
+
+        // Post-process: Map Element Stresses to Nodes
+        // We have element_stresses: ElementID -> Vec<ElementStress>
+        // We need to map these to nodes.
+        
+        #[derive(Default)]
+        struct NodeStressAccumulator {
+            vm_bottom_sum: f64,
+            vm_bottom_count: usize,
+            vm_top_sum: f64,
+            vm_top_count: usize,
+            // Store stress components for proper mid-plane interpolation
+            sxx_bottom_sum: f64,
+            syy_bottom_sum: f64,
+            szz_bottom_sum: f64,
+            sxy_bottom_sum: f64,
+            syz_bottom_sum: f64,
+            szx_bottom_sum: f64,
+            sxx_top_sum: f64,
+            syy_top_sum: f64,
+            szz_top_sum: f64,
+            sxy_top_sum: f64,
+            syz_top_sum: f64,
+            szx_top_sum: f64,
+        }
+        
+        let mut node_stress_map: std::collections::HashMap<usize, NodeStressAccumulator> = std::collections::HashMap::new();
+
+        tracing::info!("Processing {} element stress entries", element_stresses.len());
+        
+        for (elem_id, stresses) in &element_stresses {
+            // For shell elements with OUTPUT=3D, CalculiX outputs stresses at section points:
+            // - First half of integration points: TOP surface (section point 1)
+            // - Second half of integration points: BOTTOM surface (section point 5)
+            // 
+            // S4 (4-node): 4 in-plane Gauss points × 2 surfaces = 8 total (1-4 top, 5-8 bottom)
+            // S8 (8-node): 9 in-plane Gauss points × 2 surfaces = 18 total (1-9 top, 10-18 bottom)
+            // S8R (reduced): 4 in-plane Gauss points × 2 surfaces = 8 total (1-4 top, 5-8 bottom)
+            
+            // Dynamically determine the cutoff based on max integration point for this element
+            let max_int_pt = stresses.iter().map(|s| s.integration_point).max().unwrap_or(8);
+            let cutoff = max_int_pt / 2;  // First half is top, second half is bottom
+            
+            let mut bottom_vm_sum = 0.0;
+            let mut bottom_count = 0;
+            let mut top_vm_sum = 0.0;
+            let mut top_count = 0;
+            
+            // Stress component sums for mid-plane interpolation
+            let mut top_sxx = 0.0; let mut top_syy = 0.0; let mut top_szz = 0.0;
+            let mut top_sxy = 0.0; let mut top_syz = 0.0; let mut top_szx = 0.0;
+            let mut bottom_sxx = 0.0; let mut bottom_syy = 0.0; let mut bottom_szz = 0.0;
+            let mut bottom_sxy = 0.0; let mut bottom_syz = 0.0; let mut bottom_szx = 0.0;
+            
+            for s in stresses {
+                if s.integration_point <= cutoff {
+                    // TOP surface (first half of integration points)
+                    top_vm_sum += s.von_mises;
+                    top_sxx += s.sxx; top_syy += s.syy; top_szz += s.szz;
+                    top_sxy += s.sxy; top_syz += s.syz; top_szx += s.szx;
+                    top_count += 1;
+                } else {
+                    // BOTTOM surface (second half of integration points)
+                    bottom_vm_sum += s.von_mises;
+                    bottom_sxx += s.sxx; bottom_syy += s.syy; bottom_szz += s.szz;
+                    bottom_sxy += s.sxy; bottom_syz += s.syz; bottom_szx += s.szx;
+                    bottom_count += 1;
+                }
+            }
+            
+            // Average von Mises for each surface
+            let elem_bottom_vm = if bottom_count > 0 { bottom_vm_sum / bottom_count as f64 } else { 0.0 };
+            let elem_top_vm = if top_count > 0 { top_vm_sum / top_count as f64 } else { 0.0 };
+            
+            // Average stress components for each surface
+            let bc = bottom_count.max(1) as f64;
+            let tc = top_count.max(1) as f64;
+            
+            // Map to Nodes
+            // Shell IDs start at 1000001. Index = ID - 1000001.
+            if *elem_id >= 1000001 {
+                let shell_idx = elem_id - 1000001;
+                if let Some(shell) = model.shells.get(shell_idx) {
+                    for &node_id in &shell.node_ids {
+                        let accum = node_stress_map.entry(node_id).or_default();
+                        accum.vm_bottom_sum += elem_bottom_vm;
+                        accum.vm_bottom_count += 1;
+                        accum.vm_top_sum += elem_top_vm;
+                        accum.vm_top_count += 1;
+                        
+                        // Accumulate stress components for mid-plane calculation
+                        accum.sxx_bottom_sum += bottom_sxx / bc;
+                        accum.syy_bottom_sum += bottom_syy / bc;
+                        accum.szz_bottom_sum += bottom_szz / bc;
+                        accum.sxy_bottom_sum += bottom_sxy / bc;
+                        accum.syz_bottom_sum += bottom_syz / bc;
+                        accum.szx_bottom_sum += bottom_szx / bc;
+                        
+                        accum.sxx_top_sum += top_sxx / tc;
+                        accum.syy_top_sum += top_syy / tc;
+                        accum.szz_top_sum += top_szz / tc;
+                        accum.sxy_top_sum += top_sxy / tc;
+                        accum.syz_top_sum += top_syz / tc;
+                        accum.szx_top_sum += top_szx / tc;
+                    }
+                }
+            }
+        }
+
+        tracing::info!("Node stress map created: {}", node_stress_map.len());
+        
+        // Helper function to calculate von Mises from stress components
+        fn calc_von_mises(sxx: f64, syy: f64, szz: f64, sxy: f64, syz: f64, szx: f64) -> f64 {
+            (0.5 * ((sxx-syy).powi(2) + (syy-szz).powi(2) + (szz-sxx).powi(2) 
+                + 6.0*(sxy.powi(2) + syz.powi(2) + szx.powi(2)))).sqrt()
+        }
+        
+        // Build node stress results
+        let mut sample_count = 0;
+        for (node_id, accum) in node_stress_map {
+            let count = accum.vm_bottom_count.max(1) as f64;
+            
+            // Average von Mises for top and bottom surfaces
+            let vm_bottom = if accum.vm_bottom_count > 0 { Some(accum.vm_bottom_sum / accum.vm_bottom_count as f64) } else { None };
+            let vm_top = if accum.vm_top_count > 0 { Some(accum.vm_top_sum / accum.vm_top_count as f64) } else { None };
+            
+            // Calculate mid-plane stress by interpolating stress COMPONENTS (not von Mises)
+            // At neutral axis, stress components from top and bottom have opposite signs and average to ~0
+            let mid_sxx = (accum.sxx_bottom_sum + accum.sxx_top_sum) / (2.0 * count);
+            let mid_syy = (accum.syy_bottom_sum + accum.syy_top_sum) / (2.0 * count);
+            let mid_szz = (accum.szz_bottom_sum + accum.szz_top_sum) / (2.0 * count);
+            let mid_sxy = (accum.sxy_bottom_sum + accum.sxy_top_sum) / (2.0 * count);
+            let mid_syz = (accum.syz_bottom_sum + accum.syz_top_sum) / (2.0 * count);
+            let mid_szx = (accum.szx_bottom_sum + accum.szx_top_sum) / (2.0 * count);
+            
+            // Von Mises at mid-plane calculated from interpolated components
+            let vm_middle = calc_von_mises(mid_sxx, mid_syy, mid_szz, mid_sxy, mid_syz, mid_szx);
+            
+            // Log sample stresses to verify top/bottom/middle differentiation
+            if sample_count < 5 {
+                tracing::info!("Node {}: bottom={:.2} MPa, middle={:.2} MPa, top={:.2} MPa", 
+                    node_id,
+                    vm_bottom.unwrap_or(0.0) / 1e6,
+                    vm_middle / 1e6,
+                    vm_top.unwrap_or(0.0) / 1e6
+                );
+                sample_count += 1;
+            }
+            
+            // Update max_stress using maximum across all surfaces
+            let max_at_node = [Some(vm_middle), vm_top, vm_bottom]
+                .iter()
+                .filter_map(|&v| v)
+                .map(|v| v.abs())
+                .max_by(|a, b| a.partial_cmp(b).unwrap())
+                .unwrap_or(vm_middle.abs());
+            
+            if max_at_node > results.max_stress {
+                results.max_stress = max_at_node;
+            }
+
+            results.stresses.push(crate::models::NodeStress {
+                node_id,
+                von_mises: vm_middle,  // Mid-plane von Mises (from interpolated components)
+                von_mises_top: vm_top,
+                von_mises_bottom: vm_bottom,
+                sxx: None, syy: None, szz: None, sxy: None,
+            });
+        }
+        
+        tracing::info!("Added {} node stresses to results (max_stress: {:.2})", results.stresses.len(), results.max_stress);
+
+        Ok(results)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ExecutorError {
+    #[error("IO error: {0}")]
+    IoError(String),
+    #[error("Execution error: {0}")]
+    ExecutionError(String),
+    #[error("Analysis failed: {0}")]
+    AnalysisFailed(String),
+    #[error("Parsing error: {0}")]
+    ParsingError(String),
+}
