@@ -85,7 +85,7 @@ frameworkz/
 |-----------|---------|---------|
 | Rust | 1.75+ | Backend & WASM frontend |
 | Dioxus CLI | 0.6.x | Frontend build tool |
-| CalculiX (ccx) | 2.21+ | FEA solver |
+| CalculiX (ccx) | 2.23+ | FEA solver |
 
 ---
 
@@ -143,7 +143,7 @@ sudo pacman -S calculix
 
 Verify:
 ```bash
-ccx --version  # or ccx_2.21 --version
+ccx --version  # or ccx_2.23 --version
 ```
 
 #### Option B: Build from Source
@@ -153,12 +153,12 @@ ccx --version  # or ccx_2.21 --version
 sudo apt install build-essential gfortran liblapack-dev libblas-dev libarpack2-dev
 
 # Download CalculiX
-wget http://www.dhondt.de/ccx_2.21.src.tar.bz2
-tar -xjf ccx_2.21.src.tar.bz2
+wget http://www.dhondt.de/ccx_2.23.src.tar.bz2
+tar -xjf ccx_2.23.src.tar.bz2
 
 # You also need SPOOLES and ARPACK libraries
 # See CalculiX documentation for detailed build instructions
-cd CalculiX/ccx_2.21/src
+cd CalculiX/ccx_2.23/src
 make
 ```
 
@@ -217,9 +217,9 @@ ccx --version
 brew install gcc gfortran lapack arpack
 
 # Download and build
-wget http://www.dhondt.de/ccx_2.21.src.tar.bz2
-tar -xjf ccx_2.21.src.tar.bz2
-cd CalculiX/ccx_2.21/src
+wget http://www.dhondt.de/ccx_2.23.src.tar.bz2
+tar -xjf ccx_2.23.src.tar.bz2
+cd CalculiX/ccx_2.23/src
 make
 ```
 
@@ -342,7 +342,7 @@ Opens at **http://localhost:8080** (or port shown in terminal)
 
 ---
 
-## 🔨 Building for Production
+## Building for Production
 
 ### Frontend
 
