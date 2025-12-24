@@ -65,17 +65,16 @@ frameworkz/
 │   └── Dioxus.toml             # Dioxus configuration
 │
 ├── calculix-service/           # CalculiX Backend service
-│   ├── src/
-│   │   ├── main.rs             # Service entry point
-│   │   ├── api.rs              # REST API endpoints
-│   │   ├── executor.rs         # CalculiX runner & result parser
-│   │   ├── generator.rs        # INP file generator
-│   │   └── models.rs           # Request/response types
-│   ├── bin/                    # CalculiX executable (ccx)
-│   ├── Cargo.toml
-│   └── debug_export/           # Generated INP files for debugging
-│
-└── mystran-service/            # Alternative MYSTRAN backend (WIP)
+    ├── src/
+    │   ├── main.rs             # Service entry point
+    │   ├── api.rs              # REST API endpoints
+    │   ├── executor.rs         # CalculiX runner & result parser
+    │   ├── generator.rs        # INP file generator
+    │   └── models.rs           # Request/response types
+    ├── bin/                    # CalculiX executable (ccx)
+    ├── Cargo.toml
+    └── debug_export/           # Generated INP files for debugging
+
 ```
 
 ---
