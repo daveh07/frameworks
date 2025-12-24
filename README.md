@@ -302,16 +302,25 @@ chmod +x quickstart.sh
 
 ### Manual Start
 
-#### 1. Start CalculiX Service
+#### 1. Start CalculiX Service (Terminal 1)
 
+**First time only:** Build the service
+```bash
+cd calculix-service
+cargo build --release
+```
+
+**To run the service:**
 ```bash
 cd calculix-service
 
-# Build
-cargo build --release
+# Linux/macOS (recommended - with cleanup):
+pkill -f "calculix-service" || true; sleep 1; \
+cd /path/to/frameworkz/calculix-service && \
+CALCULIX_PATH=/path/to/frameworkz/calculix-service/bin/ccx \
+./target/release/calculix-service
 
-# Run with path to ccx executable
-# Linux (using included binary):
+# Linux (simple - using included binary):
 CALCULIX_PATH=./bin/ccx ./target/release/calculix-service
 
 # Linux (system installed):
@@ -329,12 +338,20 @@ set CALCULIX_PATH=C:\CalculiX\bin\ccx.exe
 .\target\release\calculix-service.exe
 ```
 
+> **Note:** Replace `/path/to/frameworkz` with your actual project path. The `pkill` command ensures no stale processes are running.
+
 Service starts on **http://localhost:8084**
 
-#### 2. Start Frontend (new terminal)
+#### 2. Start Frontend (Terminal 2)
 
+**First time only:** Ensure WASM target is installed
 ```bash
-cd frameworkz
+rustup target add wasm32-unknown-unknown
+```
+
+**To run the frontend:**
+```bash
+cd frameworks
 dx serve
 ```
 
