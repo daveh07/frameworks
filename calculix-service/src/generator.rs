@@ -71,6 +71,60 @@ impl CalculiXGenerator {
         }
     }
 
+    /// Compute beam orientation vector (local y-axis direction) that's perpendicular to the beam axis
+    /// For CalculiX, the direction vector must NOT be parallel to the beam axis
+    fn compute_beam_orientation(model: &StructuralModel) -> (f64, f64, f64) {
+        if model.beams.is_empty() {
+            return (0.0, 1.0, 0.0); // Default for horizontal beams
+        }
+
+        // Get the first beam to determine dominant direction
+        if let Some(beam) = model.beams.first() {
+            if beam.node_ids.len() >= 2 {
+                let n0 = &model.nodes[beam.node_ids[0]];
+                let n1 = &model.nodes[beam.node_ids[1]];
+
+                // Beam direction vector
+                let dx = n1.x - n0.x;
+                let dy = n1.y - n0.y;
+                let dz = n1.z - n0.z;
+
+                let len = (dx*dx + dy*dy + dz*dz).sqrt();
+                if len < 1e-10 {
+                    return (0.0, 1.0, 0.0);
+                }
+
+                // Normalized beam direction
+                let bx = dx / len;
+                let by = dy / len;
+                let bz = dz / len;
+
+                // Find which global axis the beam is most aligned with
+                let abs_x = bx.abs();
+                let abs_y = by.abs();
+                let abs_z = bz.abs();
+
+                // Choose an orientation vector perpendicular to the beam axis
+                // We need a vector that, when crossed with beam direction, gives a valid normal
+                if abs_y > abs_x && abs_y > abs_z {
+                    // Beam is mostly vertical (Y direction) - use X or Z for orientation
+                    // Use global X direction
+                    (1.0, 0.0, 0.0)
+                } else if abs_x > abs_z {
+                    // Beam is mostly along X - use Y (up) for orientation
+                    (0.0, 1.0, 0.0)
+                } else {
+                    // Beam is mostly along Z - use Y (up) for orientation  
+                    (0.0, 1.0, 0.0)
+                }
+            } else {
+                (0.0, 1.0, 0.0)
+            }
+        } else {
+            (0.0, 1.0, 0.0)
+        }
+    }
+
     pub fn generate_inp_file(&self, model: &StructuralModel) -> Result<String, GeneratorError> {
         let mut inp = String::new();
 
@@ -246,9 +300,10 @@ impl CalculiXGenerator {
                 inp.push_str("0.1, 0.1\n");
             }
             // Direction vector for local y-axis (determines beam orientation)
-            // For horizontal beams (along X), local y should point up (0, 1, 0)
-            // This ensures P2 loads act in global Y direction (vertical)
-            inp.push_str("0.0, 1.0, 0.0\n");
+            // Must be perpendicular to the beam axis - computed based on actual beam direction
+            let beam_orientation = Self::compute_beam_orientation(model);
+            inp.push_str(&format!("{:.1}, {:.1}, {:.1}\n", 
+                beam_orientation.0, beam_orientation.1, beam_orientation.2));
         }
 
         // Shell Section
