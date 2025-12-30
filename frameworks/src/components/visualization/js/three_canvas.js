@@ -68,6 +68,17 @@ import {
 import {
     generateMesh
 } from './meshing_manager.js';
+import {
+    initLabels,
+    toggleNodeLabels,
+    toggleBeamLabels,
+    togglePlateLabels,
+    toggleMeshElementLabels,
+    updateNodeLabels,
+    updateBeamLabels,
+    updatePlateLabels,
+    updateMeshElementLabels
+} from './labels_manager.js';
 
 // Global scene data
 let sceneData = null;
@@ -102,6 +113,9 @@ export async function init_three_canvas(canvas) {
     // Store controls in sceneData for easy access
     sceneData.controls = cameraControls;
     
+    // Initialize labels
+    initLabels(sceneData.scene);
+    
     // Expose sceneData globally for analysis
     window.sceneData = sceneData;
     
@@ -109,6 +123,12 @@ export async function init_three_canvas(canvas) {
     window.extractStructureData = extractStructureData;
     window.getStructureJSON = getStructureJSON;
     window.applyNodeConstraints = applyNodeConstraints;
+    
+    // Expose label toggles
+    window.toggleNodeLabels = (visible) => toggleNodeLabels(visible, sceneData.nodesGroup);
+    window.toggleBeamLabels = (visible) => toggleBeamLabels(visible, sceneData.beamsGroup);
+    window.togglePlateLabels = (visible) => togglePlateLabels(visible, sceneData.platesGroup);
+    window.toggleMeshElementLabels = (visible) => toggleMeshElementLabels(visible, sceneData.meshElementsGroup, sceneData.platesGroup);
     window.addPointLoad = addPointLoad;
     window.addDistributedLoad = addDistributedLoad;
     window.generateMesh = generateMesh;

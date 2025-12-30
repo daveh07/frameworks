@@ -48,7 +48,104 @@ pub fn ViewportToolbar(
     // Get design state to track view mode
     let design_state = use_context::<DesignState>();
     let mut ds_for_toggle = design_state.clone();
+    let mut ds_for_shortcuts = design_state.clone();
     let view_mode = design_state.view_mode.read();
+
+    // Keyboard shortcuts
+    let mut init_shortcuts = use_signal(|| false);
+    
+    use_effect(move || {
+        if *init_shortcuts.read() { return; }
+        init_shortcuts.set(true);
+
+        let mut shortcut_eval = eval(r#"
+            window.addEventListener('keydown', (e) => {
+                // Ignore if typing in an input
+                if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') {
+                    return;
+                }
+
+                let key = e.key.toUpperCase();
+                let shift = e.shiftKey;
+                
+                // Send relevant keys to Rust
+                if (['A', 'X', 'E', 'V', 'S', 'P', 'N', 'B', 'DELETE', 'BACKSPACE'].includes(key)) {
+                    dioxus.send({ key, shift });
+                }
+            });
+        "#);
+
+        let mut ds_for_shortcuts = ds_for_shortcuts.clone();
+
+        spawn(async move {
+            while let Ok(msg) = shortcut_eval.recv().await {
+                if let Ok(val) = serde_json::from_value::<serde_json::Value>(msg) {
+                    let key = val["key"].as_str().unwrap_or("");
+                    let shift = val["shift"].as_bool().unwrap_or(false);
+                    
+                    match key {
+                        "A" => select_all_nodes(),
+                        "X" => clear_node_selection(),
+                        "E" => show_extrude_panel.set(!show_extrude_panel()),
+                        "DELETE" | "BACKSPACE" => {
+                            if shift {
+                                delete_selected();
+                            }
+                        },
+                        "V" => {
+                            active_tool.set("view".to_string());
+                            let _ = eval("
+                                if (window.modes && window.modes.selectNode) window.toggleSelectNodeMode();
+                                if (window.modes && window.modes.addNode) window.toggleAddNodeMode();
+                                if (window.modes && window.modes.drawBeam) window.toggleDrawBeamMode();
+                            ");
+                        },
+                        "S" => {
+                            active_tool.set("select".to_string());
+                            toggle_select_node_mode();
+                        },
+                        "N" => {
+                            if shift {
+                                selection_filter.set("nodes".to_string());
+                                let _ = eval("if (window.setSelectionFilter) window.setSelectionFilter('nodes');");
+                            }
+                        },
+                        "B" => {
+                            if shift {
+                                selection_filter.set("beams".to_string());
+                                let _ = eval("if (window.setSelectionFilter) window.setSelectionFilter('beams');");
+                            }
+                        },
+                        "P" => {
+                            if shift {
+                                selection_filter.set("plates".to_string());
+                                let _ = eval("if (window.setSelectionFilter) window.setSelectionFilter('plates');");
+                            } else {
+                                // Toggle 2D/3D
+                                let current = *ds_for_shortcuts.view_mode.read();
+                                match current {
+                                    ViewMode::ThreeD => {
+                                        if let Some(elevation) = ds_for_shortcuts.get_active_storey_elevation() {
+                                            ds_for_shortcuts.set_view_mode(ViewMode::TwoD);
+                                            set_plan_view(elevation);
+                                        } else {
+                                            ds_for_shortcuts.set_view_mode(ViewMode::TwoD);
+                                            set_plan_view(0.0);
+                                        }
+                                    },
+                                    ViewMode::TwoD => {
+                                        ds_for_shortcuts.set_view_mode(ViewMode::ThreeD);
+                                        reset_view();
+                                    }
+                                }
+                            }
+                        },
+                        _ => {}
+                    }
+                }
+            }
+        });
+    });
 
     rsx! {
         // Toolbar
@@ -427,6 +524,62 @@ pub fn ViewportToolbar(
                         }
                     }
                 }
+            }
+        }
+        
+        // View options toolbar (labels toggle)
+        ViewOptionsToolbar {}
+    }
+}
+
+#[component]
+fn ViewOptionsToolbar() -> Element {
+    let mut show_node_labels = use_signal(|| false);
+    let mut show_beam_labels = use_signal(|| false);
+    let mut show_plate_labels = use_signal(|| false);
+    let mut show_mesh_element_labels = use_signal(|| false);
+    
+    rsx! {
+        div { class: "view-options-toolbar",
+            button {
+                class: if show_node_labels() { "view-option-btn active" } else { "view-option-btn" },
+                title: "Toggle Node Labels",
+                onclick: move |_| {
+                    let new_val = !show_node_labels();
+                    show_node_labels.set(new_val);
+                    eval(&format!("if (window.toggleNodeLabels) window.toggleNodeLabels({});", new_val));
+                },
+                "N"
+            }
+            button {
+                class: if show_beam_labels() { "view-option-btn active" } else { "view-option-btn" },
+                title: "Toggle Beam Labels",
+                onclick: move |_| {
+                    let new_val = !show_beam_labels();
+                    show_beam_labels.set(new_val);
+                    eval(&format!("if (window.toggleBeamLabels) window.toggleBeamLabels({});", new_val));
+                },
+                "B"
+            }
+            button {
+                class: if show_plate_labels() { "view-option-btn active" } else { "view-option-btn" },
+                title: "Toggle Plate Labels",
+                onclick: move |_| {
+                    let new_val = !show_plate_labels();
+                    show_plate_labels.set(new_val);
+                    eval(&format!("if (window.togglePlateLabels) window.togglePlateLabels({});", new_val));
+                },
+                "P"
+            }
+            button {
+                class: if show_mesh_element_labels() { "view-option-btn active" } else { "view-option-btn" },
+                title: "Toggle Mesh Element Labels (P1E1, P1E2...)",
+                onclick: move |_| {
+                    let new_val = !show_mesh_element_labels();
+                    show_mesh_element_labels.set(new_val);
+                    eval(&format!("if (window.toggleMeshElementLabels) window.toggleMeshElementLabels({});", new_val));
+                },
+                "E"
             }
         }
     }

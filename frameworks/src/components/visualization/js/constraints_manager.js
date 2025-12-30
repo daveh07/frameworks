@@ -240,11 +240,12 @@ function createFixedSymbol() {
     const spriteMaterial = new THREE.SpriteMaterial({ 
         map: texture,
         transparent: true,
+        alphaTest: 0.5,
         depthTest: true
     });
     const sprite = new THREE.Sprite(spriteMaterial);
     sprite.scale.set(0.6, 0.6, 1);
-    sprite.position.y = -0.15;
+    sprite.position.y = -0.25;
     
     group.add(sprite);
     
@@ -348,6 +349,7 @@ function createSpringSymbol(springDOF) {
     const spriteMaterial = new THREE.SpriteMaterial({ 
         map: texture,
         transparent: true,
+        alphaTest: 0.5,
         depthTest: true
     });
     const sprite = new THREE.Sprite(spriteMaterial);

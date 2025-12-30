@@ -1,4 +1,5 @@
 import { selectedPlates, createNode, selectedNodes } from './geometry_manager.js';
+import { updateNodeLabels } from './labels_manager.js';
 
 const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js');
 
@@ -85,6 +86,8 @@ export async function generateMesh(type, size, sceneData) {
 
     setTimeout(() => {
         console.log('Meshing complete.');
+        // Update labels once after all nodes are created (not per-node for performance)
+        updateNodeLabels(nodesGroup);
     }, 200);
 }
 
@@ -194,8 +197,8 @@ function createMeshVisualization(plate, type, size, DelaunatorClass, nodesGroup)
             }
         }
         
-        // Create new node
-        const newNode = createNode(nodesGroup, pos);
+        // Create new node - skip label update for performance (we update once at the end)
+        const newNode = createNode(nodesGroup, pos, true);
         newNode.userData.isMeshNode = true;
         
         // Make the sphere invisible but raycastable

@@ -1052,7 +1052,7 @@ export function handleSelectClick() {
             if (selectionHighlightsGroup) {
                 removeNodeSelectionHighlight(selectionHighlightsGroup, node);
             }
-            window.dispatchEvent(new CustomEvent('node-deselected', { detail: { id: node.uuid } }));
+            window.dispatchEvent(new CustomEvent('node-deselected', { detail: { id: node.userData.id || node.uuid } }));
         } else {
             selectedNodes.add(node);
             if (selectionHighlightsGroup) {
@@ -1060,7 +1060,7 @@ export function handleSelectClick() {
             }
             window.dispatchEvent(new CustomEvent('node-selected', { 
                 detail: { 
-                    id: node.uuid,
+                    id: node.userData.id || node.uuid,
                     x: node.position.x,
                     y: node.position.y,
                     z: node.position.z

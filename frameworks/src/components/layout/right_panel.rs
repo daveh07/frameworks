@@ -191,39 +191,21 @@ pub fn RightPanel(show_extrude: Signal<bool>) -> Element {
                             if let (Ok(length), Ok(iterations)) = (extrude_length().parse::<f64>(), extrude_iterations().parse::<i32>()) {
                                 let direction = extrude_direction();
                                 for _ in 0..iterations {
-                                    extrude_beams(direction.clone(), length);
+                                    extrude_beams(&direction, length);
                                 }
                             }
                         },
                         "Extrude"
                     }
-                }
-            }
-        }
-    }
-}
-
-                                extrude_beams(&direction, length);
-                            }
+                    div {
+                        class: "btn-group",
+                        button {
+                            class: "btn-secondary",
+                            onclick: move |_| {
+                                eval("if(window.undoLastAction) { window.undoLastAction(); } else { console.error('undoLastAction not available'); }");
+                            },
+                            "Undo"
                         }
-                    },
-                    "Apply"
-                }
-                div {
-                    class: "btn-group",
-                    button {
-                        class: "btn-secondary",
-                        onclick: move |_| {
-                            eval("if(window.undoLastAction) { window.undoLastAction(); } else { console.error('undoLastAction not available'); }");
-                        },
-                        "Undo"
-                    }
-                    button {
-                        class: "btn-secondary",
-                        onclick: move |_| {
-                            show_extrude.set(false);
-                        },
-                        "Close"
                     }
                 }
             }

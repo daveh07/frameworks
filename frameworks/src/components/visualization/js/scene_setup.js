@@ -339,6 +339,10 @@ export function initializeScene(canvas) {
     const platesGroup = new THREE.Group();
     scene.add(platesGroup);
 
+    const meshElementsGroup = new THREE.Group();
+    meshElementsGroup.name = 'meshElementsGroup';
+    scene.add(meshElementsGroup);
+
     // Raycaster for picking
     const raycaster = new THREE.Raycaster();
     raycaster.params.Points.threshold = 0.1; // Reduced from 0.5 for more precise node selection
@@ -366,6 +370,7 @@ export function initializeScene(canvas) {
         nodesGroup,
         beamsGroup,
         platesGroup,
+        meshElementsGroup,
         raycaster,
         mouse,
         gridPlane,
