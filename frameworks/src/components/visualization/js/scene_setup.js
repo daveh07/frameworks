@@ -23,35 +23,6 @@ function createGradientBackground() {
 }
 
 /**
- * Create axis label sprite
- * @param {string} text - Label text (X, Y, or Z)
- * @param {THREE.Vector3} position - Position for the label
- * @param {number} color - Color of the text
- * @returns {THREE.Sprite}
- */
-function createAxisLabel(text, position, color) {
-    const canvas = document.createElement('canvas');
-    canvas.width = 64;
-    canvas.height = 64;
-    const context = canvas.getContext('2d');
-    
-    context.fillStyle = `#${color.toString(16).padStart(6, '0')}`;
-    context.font = 'Bold 48px Arial';
-    context.textAlign = 'center';
-    context.textBaseline = 'middle';
-    context.fillText(text, 32, 32);
-    
-    const texture = new THREE.CanvasTexture(canvas);
-    const spriteMaterial = new THREE.SpriteMaterial({ map: texture });
-    const sprite = new THREE.Sprite(spriteMaterial);
-    sprite.position.copy(position);
-    sprite.scale.set(0.3, 0.3, 1);
-    sprite.name = `${text}Label`;
-    
-    return sprite;
-}
-
-/**
  * Create axis cylinder
  * @param {THREE.Vector3} start
  * @param {THREE.Vector3} end
@@ -80,7 +51,6 @@ function createAxis(start, end, color, radius = 0.05) {
 /**
  * Setup scene with grids, axes, and lighting
  * @param {THREE.Scene} scene
- * @returns {Object} References to grids and axes for toggle functionality
  */
 function setupSceneElements(scene) {
     // Gradient background
@@ -90,54 +60,34 @@ function setupSceneElements(scene) {
     const majorGrid = new THREE.GridHelper(50, 10, 0x00d4ff, 0x00d4ff);
     majorGrid.material.opacity = 0.5;
     majorGrid.material.transparent = true;
-    majorGrid.name = 'majorGrid';
     scene.add(majorGrid);
 
     const minorGrid = new THREE.GridHelper(50, 50, 0x0088aa, 0x0088aa);
     minorGrid.material.opacity = 0.15;
     minorGrid.material.transparent = true;
-    minorGrid.name = 'minorGrid';
     scene.add(minorGrid);
 
-    // Coordinate axes group
-    const axesGroup = new THREE.Group();
-    axesGroup.name = 'coordinateAxes';
-    
-    const axisLength = 2;
-    const xAxis = createAxis(
+    // Coordinate axes
+    scene.add(createAxis(
         new THREE.Vector3(0, 0, 0),
-        new THREE.Vector3(axisLength, 0, 0),
+        new THREE.Vector3(2, 0, 0),
         0xff0000,
         0.05
-    );
-    xAxis.name = 'xAxis';
+    ));
 
-    const yAxis = createAxis(
+    scene.add(createAxis(
         new THREE.Vector3(0, 0, 0),
-        new THREE.Vector3(0, axisLength, 0),
+        new THREE.Vector3(0, 2, 0),
         0x00ff00,
         0.05
-    );
-    yAxis.name = 'yAxis';
+    ));
 
-    const zAxis = createAxis(
+    scene.add(createAxis(
         new THREE.Vector3(0, 0, 0),
-        new THREE.Vector3(0, 0, axisLength),
+        new THREE.Vector3(0, 0, 2),
         0x0000ff,
         0.05
-    );
-    zAxis.name = 'zAxis';
-
-    axesGroup.add(xAxis);
-    axesGroup.add(yAxis);
-    axesGroup.add(zAxis);
-    
-    // Add axis labels (X, Y, Z) using sprites
-    axesGroup.add(createAxisLabel('X', new THREE.Vector3(axisLength + 0.3, 0, 0), 0xff0000));
-    axesGroup.add(createAxisLabel('Y', new THREE.Vector3(0, axisLength + 0.3, 0), 0x00ff00));
-    axesGroup.add(createAxisLabel('Z', new THREE.Vector3(0, 0, axisLength + 0.3), 0x0000ff));
-    
-    scene.add(axesGroup);
+    ));
 
     // Origin marker
     const origin = new THREE.Mesh(
@@ -156,9 +106,6 @@ function setupSceneElements(scene) {
     const fillLight = new THREE.DirectionalLight(0xffffff, 0.5); // Increased fill light
     fillLight.position.set(-10, 10, -10);
     scene.add(fillLight);
-    
-    // Return references to grids and axes for toggle functionality
-    return { majorGrid, minorGrid, axesGroup };
 }
 
 /**
@@ -317,7 +264,7 @@ export function initializeScene(canvas) {
 
     // Scene
     const scene = new THREE.Scene();
-    const sceneElements = setupSceneElements(scene);
+    setupSceneElements(scene);
 
     // Camera - using narrower FOV (40°) for less distortion, better for CAD/engineering views
     const camera = new THREE.PerspectiveCamera(40, width / height, 0.1, 1000);
@@ -373,10 +320,7 @@ export function initializeScene(canvas) {
         hoverHighlight,
         beamHoverHighlight,
         selectionHighlights,
-        referencePlane,
-        majorGrid: sceneElements.majorGrid,
-        minorGrid: sceneElements.minorGrid,
-        axesGroup: sceneElements.axesGroup
+        referencePlane
     };
 }
 
