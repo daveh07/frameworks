@@ -236,7 +236,7 @@ xattr -d com.apple.quarantine calculix-service/bin/ccx
 
 ---
 
-## 🪟 Windows Installation
+## Windows Installation
 
 ### 1. Install Rust
 
@@ -356,6 +356,7 @@ dx serve
 ```
 
 Opens at **http://localhost:8080** (or port shown in terminal)
+for main modelling page, go to: http://127.0.0.1:8080/dashboard
 
 ---
 
