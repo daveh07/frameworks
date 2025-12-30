@@ -199,77 +199,54 @@ function removeConstraintSymbol(node, sceneData) {
 }
 
 /**
- * Create fixed support symbol (linework only - box outline with cross hatching)
+ * Create fixed support symbol (2D line with hatching - billboard style)
  * @returns {THREE.Group}
  */
 function createFixedSymbol() {
     const group = new THREE.Group();
-    const color = 0x000000; // Black
     
-    // Draw box outline with lines (no solid polygon)
-    const lineMaterial = new THREE.LineBasicMaterial({ color: color, linewidth: 2 });
+    // Create canvas for 2D drawing
+    const canvas = document.createElement('canvas');
+    const size = 256;
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
     
-    // Front face outline (rectangle)
-    const frontOutline = new THREE.BufferGeometry().setFromPoints([
-        new THREE.Vector3(-0.2, 0, 0.15),
-        new THREE.Vector3(0.2, 0, 0.15),
-        new THREE.Vector3(0.2, -0.3, 0.15),
-        new THREE.Vector3(-0.2, -0.3, 0.15),
-        new THREE.Vector3(-0.2, 0, 0.15)
-    ]);
-    const frontLine = new THREE.Line(frontOutline, lineMaterial);
-    group.add(frontLine);
+    // Clear canvas
+    ctx.clearRect(0, 0, size, size);
     
-    // Back face outline (rectangle)
-    const backOutline = new THREE.BufferGeometry().setFromPoints([
-        new THREE.Vector3(-0.2, 0, -0.15),
-        new THREE.Vector3(0.2, 0, -0.15),
-        new THREE.Vector3(0.2, -0.3, -0.15),
-        new THREE.Vector3(-0.2, -0.3, -0.15),
-        new THREE.Vector3(-0.2, 0, -0.15)
-    ]);
-    const backLine = new THREE.Line(backOutline, lineMaterial);
-    group.add(backLine);
+    // Draw horizontal ground line
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 8; // Thicker line
+    ctx.beginPath();
+    ctx.moveTo(size * 0.2, size * 0.4);
+    ctx.lineTo(size * 0.8, size * 0.4);
+    ctx.stroke();
     
-    // Connect front and back (depth lines)
-    const depthLines = [
-        [new THREE.Vector3(-0.2, 0, 0.15), new THREE.Vector3(-0.2, 0, -0.15)],
-        [new THREE.Vector3(0.2, 0, 0.15), new THREE.Vector3(0.2, 0, -0.15)],
-        [new THREE.Vector3(0.2, -0.3, 0.15), new THREE.Vector3(0.2, -0.3, -0.15)],
-        [new THREE.Vector3(-0.2, -0.3, 0.15), new THREE.Vector3(-0.2, -0.3, -0.15)]
-    ];
+    // Draw diagonal hatching lines
+    ctx.lineWidth = 4; // Thicker hatching
+    const spacing = 20;
+    const hatchHeight = 40;
     
-    depthLines.forEach(points => {
-        const lineGeom = new THREE.BufferGeometry().setFromPoints(points);
-        const line = new THREE.Line(lineGeom, lineMaterial);
-        group.add(line);
-    });
-    
-    // Diagonal cross hatching on front face
-    const hatchMaterial = new THREE.LineBasicMaterial({ 
-        color: 0x000000, 
-        linewidth: 2
-    });
-    
-    // Diagonal lines going one way
-    for (let i = 0; i < 5; i++) {
-        const hatchGeometry = new THREE.BufferGeometry().setFromPoints([
-            new THREE.Vector3(-0.2 + (i * 0.1), 0, 0.16),
-            new THREE.Vector3(0.2 - (4 - i) * 0.1, -0.3, 0.16)
-        ]);
-        const hatch = new THREE.Line(hatchGeometry, hatchMaterial);
-        group.add(hatch);
+    for (let i = size * 0.2; i <= size * 0.8; i += spacing) {
+        ctx.beginPath();
+        ctx.moveTo(i, size * 0.4);
+        ctx.lineTo(i - 15, size * 0.4 + hatchHeight);
+        ctx.stroke();
     }
     
-    // Diagonal lines going the other way
-    for (let i = 0; i < 5; i++) {
-        const hatchGeometry = new THREE.BufferGeometry().setFromPoints([
-            new THREE.Vector3(-0.2 + (i * 0.1), -0.3, 0.16),
-            new THREE.Vector3(0.2 - (4 - i) * 0.1, 0, 0.16)
-        ]);
-        const hatch = new THREE.Line(hatchGeometry, hatchMaterial);
-        group.add(hatch);
-    }
+    // Create sprite from canvas
+    const texture = new THREE.CanvasTexture(canvas);
+    const spriteMaterial = new THREE.SpriteMaterial({ 
+        map: texture,
+        transparent: true,
+        depthTest: true
+    });
+    const sprite = new THREE.Sprite(spriteMaterial);
+    sprite.scale.set(0.6, 0.6, 1);
+    sprite.position.y = -0.15;
+    
+    group.add(sprite);
     
     return group;
 }
@@ -296,132 +273,162 @@ function createPinnedSymbol() {
 }
 
 /**
- * Create spring support symbol (coil shape with direction subscript)
+ * Create spring support symbol (2D zigzag spring with direction label - billboard style)
  * @param {string} springDOF - Spring direction(s) (e.g., 'x', 'y', 'z', 'xy', etc.)
  * @returns {THREE.Group}
  */
 function createSpringSymbol(springDOF) {
     const group = new THREE.Group();
     
-    // Create spring coil using line segments
-    const points = [];
-    const coils = 5;
-    const radius = 0.15;
-    const height = 0.6;
+    // Create canvas for 2D spring drawing
+    const canvas = document.createElement('canvas');
+    const size = 256;
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
     
-    for (let i = 0; i <= coils * 20; i++) {
-        const t = i / (coils * 20);
-        const angle = t * coils * Math.PI * 2;
-        const x = Math.cos(angle) * radius;
-        const y = -t * height;
-        const z = Math.sin(angle) * radius;
-        points.push(new THREE.Vector3(x, y, z));
+    // Clear canvas
+    ctx.clearRect(0, 0, size, size);
+    
+    // Draw zigzag spring (side view)
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 4;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    
+    // Spring zigzag pattern
+    const startY = size * 0.2;
+    const endY = size * 0.65;
+    const centerX = size * 0.5;
+    const zigWidth = 25;
+    const segments = 6;
+    const segmentHeight = (endY - startY) / segments;
+    
+    ctx.beginPath();
+    ctx.moveTo(centerX, startY);
+    
+    for (let i = 0; i <= segments; i++) {
+        const y = startY + i * segmentHeight;
+        const x = centerX + (i % 2 === 0 ? -zigWidth : zigWidth);
+        ctx.lineTo(x, y);
     }
     
-    const geometry = new THREE.BufferGeometry().setFromPoints(points);
-    const material = new THREE.LineBasicMaterial({ 
-        color: 0x000000,  // Black
-        linewidth: 2
-    });
-    const spring = new THREE.Line(geometry, material);
-    spring.position.y = 0;  // Top of spring starts at node
+    ctx.stroke();
     
-    group.add(spring);
+    // Draw ground line at bottom
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(size * 0.25, endY + 10);
+    ctx.lineTo(size * 0.75, endY + 10);
+    ctx.stroke();
     
-    // Create text label for spring direction (subscript style)
+    // Draw diagonal hatching under ground line
+    ctx.lineWidth = 2;
+    const hatchSpacing = 12;
+    for (let i = 0; i < 5; i++) {
+        const x = size * 0.25 + i * hatchSpacing;
+        ctx.beginPath();
+        ctx.moveTo(x, endY + 10);
+        ctx.lineTo(x - 10, endY + 22);
+        ctx.stroke();
+    }
+    
+    // Add subscript label if provided
     if (springDOF) {
-        const canvas = document.createElement('canvas');
-        const context = canvas.getContext('2d');
-        canvas.width = 128;
-        canvas.height = 64;
-        
-        context.fillStyle = '#000000';
-        context.font = 'bold 48px Arial';
-        context.textAlign = 'center';
-        context.textBaseline = 'middle';
-        context.fillText(springDOF, 64, 32);
-        
-        const texture = new THREE.CanvasTexture(canvas);
-        const spriteMaterial = new THREE.SpriteMaterial({ map: texture });
-        const sprite = new THREE.Sprite(spriteMaterial);
-        sprite.scale.set(0.3, 0.15, 1);
-        sprite.position.set(0.35, -0.3, 0);
-        group.add(sprite);
+        ctx.fillStyle = '#000000';
+        ctx.font = 'bold 48px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('k' + springDOF, centerX, size * 0.85);
     }
+    
+    // Create sprite from canvas
+    const texture = new THREE.CanvasTexture(canvas);
+    const spriteMaterial = new THREE.SpriteMaterial({ 
+        map: texture,
+        transparent: true,
+        depthTest: true
+    });
+    const sprite = new THREE.Sprite(spriteMaterial);
+    sprite.scale.set(0.7, 0.7, 1);
+    sprite.position.y = -0.2;
+    
+    group.add(sprite);
     
     return group;
 }
 
 /**
- * Create roller support symbol (3D pyramid with sphere on top and free DOF label)
+ * Create roller support symbol (Blue cone)
  * @param {string} freeDOF - Free degree(s) of freedom (e.g., 'x', 'y', 'z', 'xy', etc.)
  * @returns {THREE.Group}
  */
 function createRollerSymbol(freeDOF) {
     const group = new THREE.Group();
-    const color = 0x0066cc; // Blue
+    const color = 0x3399ff; // Brighter Blue
     
-    // Sphere (solid, smaller, positioned under node)
-    const sphereGeometry = new THREE.SphereGeometry(0.08, 16, 16);
-    const sphereMaterial = new THREE.MeshBasicMaterial({ 
-        color: color,
-        transparent: false
-    });
-    const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
-    sphere.position.y = -0.15; // Under the node
-    group.add(sphere);
-    
-    // 3D pyramid below sphere (cone with 4 sides)
-    const pyramidGeometry = new THREE.ConeGeometry(0.2, 0.3, 4);
-    const pyramidMaterial = new THREE.MeshBasicMaterial({ 
+    // Create 3D cone
+    // ConeGeometry(radius, height, radialSegments)
+    const coneGeometry = new THREE.ConeGeometry(0.15, 0.4, 16);
+    const coneMaterial = new THREE.MeshBasicMaterial({ 
         color: color
     });
-    const pyramid = new THREE.Mesh(pyramidGeometry, pyramidMaterial);
-    pyramid.position.y = -0.28; // Adjusted to close gap with sphere
-    pyramid.rotation.y = Math.PI / 4; // Rotate 45 degrees for square base
-    group.add(pyramid);
-    
-    // Create text label for free DOF (subscript style)
-    if (freeDOF) {
-        const canvas = document.createElement('canvas');
-        const context = canvas.getContext('2d');
-        canvas.width = 128;
-        canvas.height = 64;
-        
-        context.fillStyle = '#0066cc';
-        context.font = 'bold 48px Arial';
-        context.textAlign = 'center';
-        context.textBaseline = 'middle';
-        context.fillText(freeDOF, 64, 32);
-        
-        const texture = new THREE.CanvasTexture(canvas);
-        const spriteMaterial = new THREE.SpriteMaterial({ map: texture });
-        const sprite = new THREE.Sprite(spriteMaterial);
-        sprite.scale.set(0.3, 0.15, 1);
-        sprite.position.set(0.35, -0.2, 0);
-        group.add(sprite);
-    }
+    const cone = new THREE.Mesh(coneGeometry, coneMaterial);
+    // Cone points up (Y+) by default. Center is at (0,0,0).
+    // We want tip at 0, so move down by half height.
+    cone.position.y = -0.2; 
+    group.add(cone);
     
     return group;
 }
 
 /**
- * Create custom support symbol (cube with cross)
+ * Create custom support symbol (Black X)
  * @returns {THREE.Group}
  */
 function createCustomSymbol() {
-    const geometry = new THREE.BoxGeometry(0.3, 0.3, 0.3);
-    const material = new THREE.MeshBasicMaterial({ 
-        color: 0xffaa33,
-        transparent: true,
-        opacity: 0.7,
-        wireframe: true
-    });
-    const cube = new THREE.Mesh(geometry, material);
-    cube.position.y = -0.3;
-    
     const group = new THREE.Group();
-    group.add(cube);
+    
+    // Create canvas for 2D drawing
+    const canvas = document.createElement('canvas');
+    const size = 256;
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    
+    // Clear canvas
+    ctx.clearRect(0, 0, size, size);
+    
+    // Draw Black X
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 25;
+    ctx.lineCap = 'round';
+    
+    const padding = size * 0.2;
+    
+    ctx.beginPath();
+    ctx.moveTo(padding, padding);
+    ctx.lineTo(size - padding, size - padding);
+    ctx.stroke();
+    
+    ctx.beginPath();
+    ctx.moveTo(size - padding, padding);
+    ctx.lineTo(padding, size - padding);
+    ctx.stroke();
+    
+    // Create sprite from canvas
+    const texture = new THREE.CanvasTexture(canvas);
+    const spriteMaterial = new THREE.SpriteMaterial({ 
+        map: texture,
+        transparent: true,
+        depthTest: false // Always visible on top
+    });
+    const sprite = new THREE.Sprite(spriteMaterial);
+    sprite.scale.set(0.4, 0.4, 1);
+    sprite.position.y = 0; // On the node
+    
+    group.add(sprite);
     
     return group;
 }
