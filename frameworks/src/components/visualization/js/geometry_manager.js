@@ -5,6 +5,7 @@
 
 const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js');
 import { addNodeSelectionHighlight, removeNodeSelectionHighlight, clearSelectionHighlights } from './scene_setup.js';
+import { removeConstraintSymbol } from './constraints_manager.js';
 
 // Selection state
 export const selectedNodes = new Set();
@@ -484,6 +485,14 @@ export function deleteSelected(nodesGroup, beamsGroup, platesGroup) {
         
         // Remove the node
         nodesGroup.remove(node);
+        
+        // Remove associated constraint symbol if any
+        // We need to pass a scene-like object that has the scene property or is the scene
+        // Since nodesGroup is in the scene, nodesGroup.parent is the scene
+        if (nodesGroup.parent) {
+            removeConstraintSymbol(node, { scene: nodesGroup.parent });
+        }
+        
         node.geometry.dispose();
         node.material.dispose();
         deletedNodes++;

@@ -158,6 +158,19 @@ export async function init_three_canvas(canvas) {
     window.get2DElevation = get2DElevation;
     window.generateMesh = (type, size) => generateMesh(type, size, sceneData);
     
+    // Expose grid and axes toggle functions
+    window.toggleViewportGrid = (visible) => {
+        if (sceneData && sceneData.majorGrid && sceneData.minorGrid) {
+            sceneData.majorGrid.visible = visible;
+            sceneData.minorGrid.visible = visible;
+        }
+    };
+    window.toggleViewportAxes = (visible) => {
+        if (sceneData && sceneData.axesGroup) {
+            sceneData.axesGroup.visible = visible;
+        }
+    };
+    
     // Expose constraint functions
     window.applyNodeConstraints = (constraintData) => {
         console.log('window.applyNodeConstraints called with:', constraintData);
