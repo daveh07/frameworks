@@ -5,6 +5,8 @@
 
 const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js');
 import { addNodeSelectionHighlight, removeNodeSelectionHighlight, clearSelectionHighlights } from './scene_setup.js';
+import { removeConstraintSymbol } from './constraints_manager.js';
+import { updateNodeLabels, updateBeamLabels, updatePlateLabels } from './labels_manager.js';
 
 // Selection state
 export const selectedNodes = new Set();
@@ -17,6 +19,23 @@ let selectionHighlightsGroup = null;
 
 export function setSelectionHighlightsGroup(group) {
     selectionHighlightsGroup = group;
+}
+
+/**
+ * Get next available ID for a group
+ * @param {THREE.Group} group
+ * @returns {number}
+ */
+function getNextId(group) {
+    let maxId = 0;
+    if (group && group.children) {
+        group.children.forEach(child => {
+            if (child.userData && typeof child.userData.id === 'number') {
+                maxId = Math.max(maxId, child.userData.id);
+            }
+        });
+    }
+    return maxId + 1;
 }
 
 // Undo history
@@ -77,6 +96,8 @@ export function undoLastAction(nodesGroup, beamsGroup) {
         });
         
         console.log(`Undid extrusion: removed ${action.nodesCreated.length} node(s) and ${action.beamsCreated.length} beam(s), restored ${selectedNodes.size} selected node(s)`);
+        updateNodeLabels(nodesGroup);
+        updateBeamLabels(beamsGroup);
     }
 }
 
@@ -136,9 +157,10 @@ export function findBeamBetweenPositions(beamsGroup, pos1, pos2) {
  * Create a new node at position
  * @param {THREE.Group} nodesGroup
  * @param {THREE.Vector3} position
+ * @param {boolean} skipLabelUpdate - Skip label update (for bulk operations)
  * @returns {THREE.Mesh}
  */
-export function createNode(nodesGroup, position) {
+export function createNode(nodesGroup, position, skipLabelUpdate = false) {
     const nodeGeom = new THREE.SphereGeometry(0.07, 12, 12);
     const nodeMat = new THREE.MeshStandardMaterial({
         color: 0xcccccc,
@@ -150,8 +172,12 @@ export function createNode(nodesGroup, position) {
     const node = new THREE.Mesh(nodeGeom, nodeMat);
     node.position.copy(position);
     node.userData.originalColor = 0xcccccc;
+    node.userData.id = getNextId(nodesGroup);
     nodesGroup.add(node);
-    console.log(`Node created at (${position.x}, ${position.y}, ${position.z})`);
+    console.log(`Node created at (${position.x}, ${position.y}, ${position.z}) with ID ${node.userData.id}`);
+    if (!skipLabelUpdate) {
+        updateNodeLabels(nodesGroup);
+    }
     return node;
 }
 
@@ -162,9 +188,10 @@ export function createNode(nodesGroup, position) {
  * @param {THREE.Vector3} endPos
  * @param {THREE.Mesh} startNode - Optional reference to start node
  * @param {THREE.Mesh} endNode - Optional reference to end node
+ * @param {boolean} skipLabelUpdate - Skip label update (for bulk operations)
  * @returns {THREE.Mesh|null}
  */
-export function createBeam(beamsGroup, startPos, endPos, startNode = null, endNode = null) {
+export function createBeam(beamsGroup, startPos, endPos, startNode = null, endNode = null, skipLabelUpdate = false) {
     // Check for duplicate
     if (findBeamBetweenPositions(beamsGroup, startPos, endPos)) {
         console.log('Beam already exists between these positions');
@@ -199,9 +226,13 @@ export function createBeam(beamsGroup, startPos, endPos, startNode = null, endNo
     // Store node references in userData for analysis export
     beam.userData.startNode = startNode;
     beam.userData.endNode = endNode;
+    beam.userData.id = getNextId(beamsGroup);
     
     beamsGroup.add(beam);
-    console.log(`Beam created between positions`);
+    console.log(`Beam created between positions with ID ${beam.userData.id}`);
+    if (!skipLabelUpdate) {
+        updateBeamLabels(beamsGroup);
+    }
     return beam;
 }
 
@@ -292,10 +323,12 @@ export function createPlateMesh(nodes, platesGroup) {
     plate.userData.originalColor = plateColor;
     plate.userData.originalOpacity = 0.65;
     plate.userData.isVertical = isVertical;
+    plate.userData.id = getNextId(platesGroup);
     plate.renderOrder = 1;
 
     platesGroup.add(plate);
-    console.log(`Plate created with ${nodes.length} nodes (vertical=${isVertical})`);
+    console.log(`Plate created with ${nodes.length} nodes (vertical=${isVertical}) and ID ${plate.userData.id}`);
+    updatePlateLabels(platesGroup);
     return plate;
 }
 
@@ -484,6 +517,14 @@ export function deleteSelected(nodesGroup, beamsGroup, platesGroup) {
         
         // Remove the node
         nodesGroup.remove(node);
+        
+        // Remove associated constraint symbol if any
+        // We need to pass a scene-like object that has the scene property or is the scene
+        // Since nodesGroup is in the scene, nodesGroup.parent is the scene
+        if (nodesGroup.parent) {
+            removeConstraintSymbol(node, { scene: nodesGroup.parent });
+        }
+        
         node.geometry.dispose();
         node.material.dispose();
         deletedNodes++;
@@ -495,6 +536,10 @@ export function deleteSelected(nodesGroup, beamsGroup, platesGroup) {
     
     // Cleanup orphaned nodes (nodes not connected to any beam or plate)
     cleanupOrphanedNodes(nodesGroup, beamsGroup, platesGroup);
+    
+    updateNodeLabels(nodesGroup);
+    updateBeamLabels(beamsGroup);
+    updatePlateLabels(platesGroup);
     
     console.log(`Deleted ${deletedNodes} node(s), ${deletedBeams} beam(s), and ${deletedPlates} plate(s)/element(s)`);
 }
