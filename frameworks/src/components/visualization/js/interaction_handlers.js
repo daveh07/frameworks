@@ -1052,11 +1052,20 @@ export function handleSelectClick() {
             if (selectionHighlightsGroup) {
                 removeNodeSelectionHighlight(selectionHighlightsGroup, node);
             }
+            window.dispatchEvent(new CustomEvent('node-deselected', { detail: { id: node.uuid } }));
         } else {
             selectedNodes.add(node);
             if (selectionHighlightsGroup) {
                 addNodeSelectionHighlight(selectionHighlightsGroup, node);
             }
+            window.dispatchEvent(new CustomEvent('node-selected', { 
+                detail: { 
+                    id: node.uuid,
+                    x: node.position.x,
+                    y: node.position.y,
+                    z: node.position.z
+                } 
+            }));
         }
         console.log(`${selectedNodes.size} node(s) selected`);
     }
