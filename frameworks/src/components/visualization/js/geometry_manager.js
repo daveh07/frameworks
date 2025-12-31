@@ -158,9 +158,16 @@ export function findBeamBetweenPositions(beamsGroup, pos1, pos2) {
  * @param {THREE.Group} nodesGroup
  * @param {THREE.Vector3} position
  * @param {boolean} skipLabelUpdate - Skip label update (for bulk operations)
- * @returns {THREE.Mesh}
+ * @returns {THREE.Mesh|null} - Returns null if node already exists at position
  */
 export function createNode(nodesGroup, position, skipLabelUpdate = false) {
+    // Check for duplicate node at this position
+    const existingNode = findNodeAtPosition(nodesGroup, position);
+    if (existingNode) {
+        console.log(`Node already exists at (${position.x}, ${position.y}, ${position.z}) with ID ${existingNode.userData.id}`);
+        return null;
+    }
+
     const nodeGeom = new THREE.SphereGeometry(0.07, 12, 12);
     const nodeMat = new THREE.MeshStandardMaterial({
         color: 0xcccccc,

@@ -79,6 +79,15 @@ import {
     updatePlateLabels,
     updateMeshElementLabels
 } from './labels_manager.js';
+import {
+    showBendingMomentDiagram,
+    showShearForceDiagram,
+    showDeformedShape,
+    clearDiagrams,
+    colorBeamsByStress,
+    resetBeamColors,
+    showBeamForcesSummary
+} from './analysis_diagrams.js';
 
 // Global scene data
 let sceneData = null;
@@ -330,6 +339,9 @@ export async function init_three_canvas(canvas) {
         }
         const position = new THREE.Vector3(x, y, z);
         const node = createNode(sceneData.nodesGroup, position);
+        if (!node) {
+            console.log(`Cannot create node at (${x}, ${y}, ${z}): a node already exists at this location`);
+        }
         return node;
     };
     
@@ -353,24 +365,30 @@ export async function init_three_canvas(canvas) {
         symbolGroup.userData.isConstraintSymbol = true;
         symbolGroup.userData.supportType = constraintType;
         
-        // Create pinned support symbol (pyramid with tip pointing down)
+        // Create pinned support symbol (2D triangle)
         if (constraintType === 'pinned') {
-            const pyramidGeom = new THREE.ConeGeometry(0.3, 0.4, 4);
-            const pyramidMat = new THREE.MeshBasicMaterial({
-                color: 0x33ff77  // Light green
+            // Create 2D triangle shape
+            const triangleShape = new THREE.Shape();
+            triangleShape.moveTo(0, 0);        // Top point (tip)
+            triangleShape.lineTo(-0.3, -0.4);  // Bottom left
+            triangleShape.lineTo(0.3, -0.4);   // Bottom right
+            triangleShape.lineTo(0, 0);        // Back to top
+            
+            const triangleGeom = new THREE.ShapeGeometry(triangleShape);
+            const triangleMat = new THREE.MeshBasicMaterial({
+                color: 0x33ff77,  // Light green
+                side: THREE.DoubleSide
             });
-            const pyramid = new THREE.Mesh(pyramidGeom, pyramidMat);
-            pyramid.position.y = -0.2;
-            pyramid.rotation.y = Math.PI / 4; // Rotate 45 degrees for square base
-            symbolGroup.add(pyramid);
+            const triangle = new THREE.Mesh(triangleGeom, triangleMat);
+            symbolGroup.add(triangle);
         } else if (constraintType === 'fixed') {
-            // Create fixed support (box with hatching)
-            const boxGeom = new THREE.BoxGeometry(0.5, 0.15, 0.5);
+            // Create fixed support (box with hatching) - 15% bigger
+            const boxGeom = new THREE.BoxGeometry(0.575, 0.1725, 0.575);
             const boxMat = new THREE.MeshBasicMaterial({
                 color: 0xff3333  // Red
             });
             const box = new THREE.Mesh(boxGeom, boxMat);
-            box.position.y = -0.075;
+            box.position.y = -0.086;
             symbolGroup.add(box);
         }
         

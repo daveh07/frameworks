@@ -1,17 +1,26 @@
-// Extract structure data from Three.js scene for Code_Aster analysis
+// Extract structure data from Three.js scene for CalculiX analysis
 
-window.extractStructureData = function() {
+window.extractStructureData = function(material, defaultThickness) {
     const sceneData = window.sceneData;
     if (!sceneData) {
         console.error('Scene data not available');
         return null;
     }
 
+    // Get beam section from global (set by analysis panel)
+    const beamSection = window.currentBeamSection || {
+        section_type: 'Rectangular',
+        width: 0.3,
+        height: 0.5,
+        flange_thickness: 0.02,
+        web_thickness: 0.015
+    };
+
     console.log('=== Starting structure extraction ===');
     console.log('sceneData:', sceneData);
-    console.log('nodesGroup:', sceneData.nodesGroup);
-    console.log('beamsGroup:', sceneData.beamsGroup);
-    console.log('scene.children:', sceneData.scene.children);
+    console.log('material:', material);
+    console.log('beamSection:', beamSection);
+    console.log('defaultThickness:', defaultThickness);
 
     const nodes = [];
     const beams = [];
@@ -64,9 +73,11 @@ window.extractStructureData = function() {
                         id: beamId++,
                         node_ids: [startNode.id, endNode.id],
                         section: {
-                            width: 0.3,
-                            height: 0.5,
-                            section_type: "Rectangular"
+                            width: beamSection.width,
+                            height: beamSection.height,
+                            section_type: beamSection.section_type,
+                            flange_thickness: beamSection.flange_thickness,
+                            web_thickness: beamSection.web_thickness
                         },
                         uuid: beamMesh.uuid
                     };
@@ -191,13 +202,16 @@ window.extractStructureData = function() {
         console.log('No beamLoads available');
     }
 
-    // Material properties (default structural steel)
-    const material = {
+    // Use material properties passed from analysis panel, or default to structural steel
+    const usedMaterial = material || {
         name: "Structural Steel",
-        elastic_modulus: 200e9,  // Pa
+        elastic_modulus: 210e6,  // kPa (matching kN, m units)
         poisson_ratio: 0.3,
-        density: 7850.0  // kg/m³
+        density: 78.5  // kN/m³
     };
+
+    // Use default thickness for shells
+    const shellThickness = defaultThickness || 0.2; // 200mm default
 
     const structureData = {
         nodes,
@@ -205,7 +219,8 @@ window.extractStructureData = function() {
         supports,
         point_loads,
         distributed_loads,
-        material
+        material: usedMaterial,
+        shell_thickness: shellThickness
     };
 
     console.log('Extracted structure data:', structureData);

@@ -2,6 +2,15 @@ use crate::models::{StructuralModel, SupportType};
 
 pub struct CalculiXGenerator;
 
+/// Beam orientation category - used to group beams with same orientation vector
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum BeamOrientationCategory {
+    Vertical,       // Mostly along Y axis (columns)
+    HorizontalX,    // Mostly along X axis
+    HorizontalZ,    // Mostly along Z axis
+    Other,          // Diagonal or other
+}
+
 impl CalculiXGenerator {
     const KILO_TO_BASE: f64 = 1000.0;
     const GRAVITY: f64 = 9.81;
@@ -18,8 +27,9 @@ impl CalculiXGenerator {
         value_kilo_newton_per_m2 * Self::KILO_TO_BASE
     }
 
-    fn to_mass_density(value_kilo_newton_per_m3: f64) -> f64 {
-        (value_kilo_newton_per_m3 * Self::KILO_TO_BASE) / Self::GRAVITY
+    /// Density is passed in kg/m³ - CalculiX uses kg/m³ directly
+    fn to_mass_density(value_kg_per_m3: f64) -> f64 {
+        value_kg_per_m3 // No conversion needed - already in SI units
     }
 
     /// Detect the dominant normal direction of shell elements
@@ -71,55 +81,76 @@ impl CalculiXGenerator {
         }
     }
 
-    /// Compute beam orientation vector (local y-axis direction) that's perpendicular to the beam axis
+    /// Get orientation category for a beam based on its direction
+    fn get_beam_orientation_category(model: &StructuralModel, beam: &crate::models::Beam) -> BeamOrientationCategory {
+        if beam.node_ids.len() < 2 {
+            return BeamOrientationCategory::HorizontalX;
+        }
+        
+        let n0 = &model.nodes[beam.node_ids[0]];
+        let n1 = &model.nodes[beam.node_ids[1]];
+
+        let dx = n1.x - n0.x;
+        let dy = n1.y - n0.y;
+        let dz = n1.z - n0.z;
+
+        let len = (dx*dx + dy*dy + dz*dz).sqrt();
+        if len < 1e-10 {
+            return BeamOrientationCategory::HorizontalX;
+        }
+
+        let abs_x = dx.abs() / len;
+        let abs_y = dy.abs() / len;
+        let abs_z = dz.abs() / len;
+
+        // Threshold for "mostly" aligned (cos(30°) ≈ 0.866)
+        let threshold = 0.7;
+
+        if abs_y > threshold {
+            BeamOrientationCategory::Vertical
+        } else if abs_x > abs_z && abs_x > threshold {
+            BeamOrientationCategory::HorizontalX
+        } else if abs_z > threshold {
+            BeamOrientationCategory::HorizontalZ
+        } else {
+            BeamOrientationCategory::Other
+        }
+    }
+
+    /// Get the orientation vector (local y-axis) for a beam category
+    fn get_orientation_for_category(category: BeamOrientationCategory) -> (f64, f64, f64) {
+        match category {
+            // Vertical beams: use global X as local y (cross product gives Z as local z)
+            BeamOrientationCategory::Vertical => (1.0, 0.0, 0.0),
+            // Horizontal X beams: use global Y (up) as local y
+            BeamOrientationCategory::HorizontalX => (0.0, 1.0, 0.0),
+            // Horizontal Z beams: use global Y (up) as local y
+            BeamOrientationCategory::HorizontalZ => (0.0, 1.0, 0.0),
+            // Other diagonal beams: default to Y up
+            BeamOrientationCategory::Other => (0.0, 1.0, 0.0),
+        }
+    }
+
+    /// Get element set name suffix for a beam category
+    fn get_elset_suffix(category: BeamOrientationCategory) -> &'static str {
+        match category {
+            BeamOrientationCategory::Vertical => "_VERT",
+            BeamOrientationCategory::HorizontalX => "_HORX",
+            BeamOrientationCategory::HorizontalZ => "_HORZ",
+            BeamOrientationCategory::Other => "_DIAG",
+        }
+    }
+
+    /// Compute beam orientation vector (legacy - for single orientation)
     /// For CalculiX, the direction vector must NOT be parallel to the beam axis
     fn compute_beam_orientation(model: &StructuralModel) -> (f64, f64, f64) {
         if model.beams.is_empty() {
-            return (0.0, 1.0, 0.0); // Default for horizontal beams
+            return (0.0, 1.0, 0.0);
         }
 
-        // Get the first beam to determine dominant direction
         if let Some(beam) = model.beams.first() {
-            if beam.node_ids.len() >= 2 {
-                let n0 = &model.nodes[beam.node_ids[0]];
-                let n1 = &model.nodes[beam.node_ids[1]];
-
-                // Beam direction vector
-                let dx = n1.x - n0.x;
-                let dy = n1.y - n0.y;
-                let dz = n1.z - n0.z;
-
-                let len = (dx*dx + dy*dy + dz*dz).sqrt();
-                if len < 1e-10 {
-                    return (0.0, 1.0, 0.0);
-                }
-
-                // Normalized beam direction
-                let bx = dx / len;
-                let by = dy / len;
-                let bz = dz / len;
-
-                // Find which global axis the beam is most aligned with
-                let abs_x = bx.abs();
-                let abs_y = by.abs();
-                let abs_z = bz.abs();
-
-                // Choose an orientation vector perpendicular to the beam axis
-                // We need a vector that, when crossed with beam direction, gives a valid normal
-                if abs_y > abs_x && abs_y > abs_z {
-                    // Beam is mostly vertical (Y direction) - use X or Z for orientation
-                    // Use global X direction
-                    (1.0, 0.0, 0.0)
-                } else if abs_x > abs_z {
-                    // Beam is mostly along X - use Y (up) for orientation
-                    (0.0, 1.0, 0.0)
-                } else {
-                    // Beam is mostly along Z - use Y (up) for orientation  
-                    (0.0, 1.0, 0.0)
-                }
-            } else {
-                (0.0, 1.0, 0.0)
-            }
+            let cat = Self::get_beam_orientation_category(model, beam);
+            Self::get_orientation_for_category(cat)
         } else {
             (0.0, 1.0, 0.0)
         }
@@ -146,30 +177,54 @@ impl CalculiXGenerator {
         // 3. Elements (Beams)
         // Using B32 (3-node quadratic beam) for better accuracy
         // B32 requires 3 nodes: start, end, and midpoint
+        // 3. Elements (Beams)
+        // Group beams by orientation to provide correct local y-axis for each group
+        // This is essential for 3D frames with both horizontal beams and vertical columns
         if !model.beams.is_empty() {
+            use std::collections::HashMap;
+            
+            // Categorize beams by orientation
+            let mut beam_categories: HashMap<&'static str, Vec<&crate::models::Beam>> = HashMap::new();
+            
+            for beam in &model.beams {
+                let cat = Self::get_beam_orientation_category(model, beam);
+                let suffix = Self::get_elset_suffix(cat);
+                beam_categories.entry(suffix).or_insert_with(Vec::new).push(beam);
+            }
+            
             // Check if beams have midpoint nodes (quadratic)
             let has_midpoint = model.beams.first().map_or(false, |b| b.node_ids.len() >= 3);
+            let element_type = if has_midpoint { "B32" } else { "B31" };
             
-            if has_midpoint {
-                inp.push_str("*ELEMENT, TYPE=B32, ELSET=EBEAMS\n");
-                for beam in &model.beams {
-                    if beam.node_ids.len() >= 3 {
-                        // B32: Node1, Node2 (end), Node3 (midpoint)
-                        // CalculiX B32 order: end1, end2, mid
+            // Generate element definitions for each category
+            for (suffix, beams) in &beam_categories {
+                let elset_name = format!("EBEAMS{}", suffix);
+                inp.push_str(&format!("*ELEMENT, TYPE={}, ELSET={}\n", element_type, elset_name));
+                
+                for beam in beams {
+                    if has_midpoint && beam.node_ids.len() >= 3 {
                         inp.push_str(&format!("{}, {}, {}, {}\n", 
                             beam.id + 1, 
                             beam.node_ids[0] + 1, 
                             beam.node_ids[1] + 1, 
                             beam.node_ids[2] + 1));
+                    } else if beam.node_ids.len() >= 2 {
+                        inp.push_str(&format!("{}, {}, {}\n", 
+                            beam.id + 1, 
+                            beam.node_ids[0] + 1, 
+                            beam.node_ids[1] + 1));
                     }
                 }
-            } else {
-                // Fallback to linear B31 if no midpoint nodes
-                inp.push_str("*ELEMENT, TYPE=B31, ELSET=EBEAMS\n");
-                for beam in &model.beams {
-                    if beam.node_ids.len() >= 2 {
-                        inp.push_str(&format!("{}, {}, {}\n", beam.id + 1, beam.node_ids[0] + 1, beam.node_ids[1] + 1));
-                    }
+            }
+            
+            // Create combined EBEAMS set for stress output
+            inp.push_str("*ELSET, ELSET=EBEAMS\n");
+            let suffixes: Vec<_> = beam_categories.keys().collect();
+            for (i, suffix) in suffixes.iter().enumerate() {
+                if i < suffixes.len() - 1 {
+                    inp.push_str(&format!("EBEAMS{},\n", suffix));
+                } else {
+                    inp.push_str(&format!("EBEAMS{}\n", suffix));
                 }
             }
         }
@@ -260,50 +315,50 @@ impl CalculiXGenerator {
         inp.push_str(&format!("{:.4}\n", density));
 
         // 6. Sections
-        // Beam Section
+        // Beam Sections - one per orientation category with correct local y-axis
         if !model.beams.is_empty() {
-            if let Some(first_beam) = model.beams.first() {
+            use std::collections::HashMap;
+            
+            // Get beam categories that exist in the model
+            let mut categories: HashMap<&'static str, BeamOrientationCategory> = HashMap::new();
+            for beam in &model.beams {
+                let cat = Self::get_beam_orientation_category(model, beam);
+                let suffix = Self::get_elset_suffix(cat);
+                categories.insert(suffix, cat);
+            }
+            
+            // Get section properties from first beam
+            let first_beam = model.beams.first().unwrap();
+            
+            // Generate a beam section for each category with its specific orientation
+            for (suffix, cat) in &categories {
+                let elset_name = format!("EBEAMS{}", suffix);
+                let orientation = Self::get_orientation_for_category(*cat);
+                
                 match first_beam.section.section_type {
                     crate::models::SectionType::IBeam => {
-                        // I-beam section: requires height, width, web thickness, flange thickness
-                        // CalculiX I-beam: h1, h2, b, s, t1, t2 (symmetric I-beam uses h1=h2, t1=t2)
-                        // where h1,h2 = web heights (half total less flanges), b = flange width,
-                        // s = web thickness, t1,t2 = flange thicknesses
-                        inp.push_str("*BEAM SECTION, ELSET=EBEAMS, MATERIAL=MATERIAL1, SECTION=BOX\n");
-                        
-                        // For now, use BOX section which is more stable in CalculiX
-                        // BOX: a (height), b (width), t1, t2, t3, t4 (wall thicknesses)
+                        inp.push_str(&format!("*BEAM SECTION, ELSET={}, MATERIAL=MATERIAL1, SECTION=BOX\n", elset_name));
                         let height = first_beam.section.height;
                         let width = first_beam.section.width;
-                        let tf = first_beam.section.flange_thickness.unwrap_or(0.0108); // 310UB32 default: 10.8mm
-                        let tw = first_beam.section.web_thickness.unwrap_or(0.0059);    // 310UB32 default: 5.9mm
-                        
-                        // BOX section parameters: a, b, t1, t2, t3, t4
-                        // t1=bottom, t2=right, t3=top, t4=left
+                        let tf = first_beam.section.flange_thickness.unwrap_or(0.0108);
+                        let tw = first_beam.section.web_thickness.unwrap_or(0.0059);
                         inp.push_str(&format!("{:.6}, {:.6}, {:.6}, {:.6}, {:.6}, {:.6}\n", 
                             height, width, tf, tw, tf, tw));
                     },
                     crate::models::SectionType::Circular => {
-                        inp.push_str("*BEAM SECTION, ELSET=EBEAMS, MATERIAL=MATERIAL1, SECTION=CIRC\n");
-                        // Radius
+                        inp.push_str(&format!("*BEAM SECTION, ELSET={}, MATERIAL=MATERIAL1, SECTION=CIRC\n", elset_name));
                         let radius = first_beam.section.width / 2.0;
                         inp.push_str(&format!("{:.6}\n", radius));
                     },
                     crate::models::SectionType::Rectangular => {
-                        inp.push_str("*BEAM SECTION, ELSET=EBEAMS, MATERIAL=MATERIAL1, SECTION=RECT\n");
-                        inp.push_str(&format!("{:.6}, {:.6}\n", first_beam.section.width, first_beam.section.height));
+                        inp.push_str(&format!("*BEAM SECTION, ELSET={}, MATERIAL=MATERIAL1, SECTION=RECT\n", elset_name));
+                        inp.push_str(&format!("{:.6}, {:.6}\n", first_beam.section.height, first_beam.section.width));
                     },
                 }
-            } else {
-                // Default rectangular section
-                inp.push_str("*BEAM SECTION, ELSET=EBEAMS, MATERIAL=MATERIAL1, SECTION=RECT\n");
-                inp.push_str("0.1, 0.1\n");
+                // Orientation vector for this beam category
+                inp.push_str(&format!("{:.1}, {:.1}, {:.1}\n", 
+                    orientation.0, orientation.1, orientation.2));
             }
-            // Direction vector for local y-axis (determines beam orientation)
-            // Must be perpendicular to the beam axis - computed based on actual beam direction
-            let beam_orientation = Self::compute_beam_orientation(model);
-            inp.push_str(&format!("{:.1}, {:.1}, {:.1}\n", 
-                beam_orientation.0, beam_orientation.1, beam_orientation.2));
         }
 
         // Shell Section
@@ -469,9 +524,11 @@ impl CalculiXGenerator {
         inp.push_str("U, RF\n"); 
         
         if !model.beams.is_empty() {
-            // Request beam stresses (CalculiX computes section forces from stresses)
+            // Request beam stresses at integration points
+            // Note: Section forces (SF) are not available via *EL PRINT for beams
+            // We calculate beam stresses from the stress output instead
             inp.push_str("*EL PRINT, ELSET=EBEAMS\n");
-            inp.push_str("S\n");   // Stresses at integration points
+            inp.push_str("S\n");
         }
         
         if !model.shells.is_empty() {

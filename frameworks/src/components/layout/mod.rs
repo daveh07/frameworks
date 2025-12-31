@@ -11,6 +11,9 @@ pub mod point_load_panel;
 pub mod distributed_load_panel;
 pub mod pressure_load_panel;
 pub mod mesh_panel;
+pub mod beam_properties_panel;
+pub mod shell_properties_panel;
+pub mod material_properties_panel;
 
 
 pub use analysis_panel::AnalysisPanel;
@@ -26,3 +29,6 @@ pub use point_load_panel::PointLoadPanel;
 pub use distributed_load_panel::DistributedLoadPanel;
 pub use pressure_load_panel::PressureLoadPanel;
 pub use mesh_panel::MeshPanel;
+pub use beam_properties_panel::{BeamPropertiesPanel, BeamProperties};
+pub use shell_properties_panel::{ShellPropertiesPanel, ShellProperties};
+pub use material_properties_panel::{MaterialPropertiesPanel, MaterialProperties};

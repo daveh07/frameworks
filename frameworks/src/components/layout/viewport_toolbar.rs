@@ -38,7 +38,10 @@ pub fn ViewportToolbar(
     show_distributed_load_panel: Signal<bool>,
     show_pressure_load_panel: Signal<bool>,
     show_analysis_panel: Signal<bool>,
-    show_mesh_panel: Signal<bool>
+    show_mesh_panel: Signal<bool>,
+    show_beam_properties: Signal<bool>,
+    show_shell_properties: Signal<bool>,
+    show_material_properties: Signal<bool>,
 ) -> Element {
     let mut grid_visible = use_signal(|| true);
     let mut axes_visible = use_signal(|| true);
@@ -224,25 +227,33 @@ pub fn ViewportToolbar(
                     
                     div { class: "toolbar-divider" }
                     
-                    // MATERIALS & PROPERTIES
+                    // PROPERTIES
                     div { class: "toolbar-section",
                         span { class: "toolbar-section-label", "Properties" }
                         div { class: "toolbar-section-buttons",
                             button {
                                 class: "tool-button-icon",
-                                title: "Materials",
+                                title: "Beam Properties",
                                 onclick: move |_| {
-                                    show_analysis_panel.set(!show_analysis_panel());
+                                    show_beam_properties.set(!show_beam_properties());
                                 },
-                                span { class: "btn-icon", dangerous_inner_html: ICON_MATERIAL }
+                                span { class: "btn-icon", dangerous_inner_html: ICON_BEAM }
                             }
                             button {
                                 class: "tool-button-icon",
-                                title: "Section Properties",
+                                title: "Shell/Plate Properties",
                                 onclick: move |_| {
-                                    show_analysis_panel.set(!show_analysis_panel());
+                                    show_shell_properties.set(!show_shell_properties());
                                 },
-                                span { class: "btn-icon", dangerous_inner_html: ICON_PROPERTIES }
+                                span { class: "btn-icon", dangerous_inner_html: ICON_PLATE }
+                            }
+                            button {
+                                class: "tool-button-icon",
+                                title: "Material Properties",
+                                onclick: move |_| {
+                                    show_material_properties.set(!show_material_properties());
+                                },
+                                span { class: "btn-icon", dangerous_inner_html: ICON_MATERIAL }
                             }
                         }
                     }

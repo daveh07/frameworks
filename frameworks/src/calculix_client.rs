@@ -114,8 +114,29 @@ pub struct AnalysisResults {
     pub displacements: Vec<NodeDisplacement>,
     pub reactions: Vec<NodeReaction>,
     pub stresses: Vec<NodeStress>,
+    #[serde(default)]
+    pub beam_forces: Vec<BeamForces>,
     pub max_displacement: f64,
     pub max_stress: f64,
+    #[serde(default)]
+    pub max_beam_stress: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct BeamForces {
+    pub element_id: usize,
+    pub axial_force: f64,
+    pub shear_y: f64,
+    pub shear_z: f64,
+    pub moment_y: f64,
+    pub moment_z: f64,
+    pub torsion: f64,
+    #[serde(default)]
+    pub combined_stress: f64,
+    #[serde(default)]
+    pub axial_stress: f64,
+    #[serde(default)]
+    pub bending_stress: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

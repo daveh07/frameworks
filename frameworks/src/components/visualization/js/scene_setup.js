@@ -35,6 +35,9 @@ function createAxisLabel(text, position, color) {
     canvas.height = 64;
     const context = canvas.getContext('2d');
     
+    // Clear canvas with transparency
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    
     context.fillStyle = `#${color.toString(16).padStart(6, '0')}`;
     context.font = 'Bold 48px Arial';
     context.textAlign = 'center';
@@ -42,7 +45,10 @@ function createAxisLabel(text, position, color) {
     context.fillText(text, 32, 32);
     
     const texture = new THREE.CanvasTexture(canvas);
-    const spriteMaterial = new THREE.SpriteMaterial({ map: texture });
+    const spriteMaterial = new THREE.SpriteMaterial({ 
+        map: texture,
+        transparent: true
+    });
     const sprite = new THREE.Sprite(spriteMaterial);
     sprite.position.copy(position);
     sprite.scale.set(0.3, 0.3, 1);
