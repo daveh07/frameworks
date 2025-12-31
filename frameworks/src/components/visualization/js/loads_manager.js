@@ -318,25 +318,38 @@ function createPointLoadVisual(load, beam) {
     group.add(arrowHelper);
     group.position.set(0, 0, 0);
     
-    // Add label with magnitude
+    // Add label with magnitude - solid dark text, offset from arrow
     const canvas = document.createElement('canvas');
     const context = canvas.getContext('2d');
-    canvas.width = 160;
-    canvas.height = 64;
+    canvas.width = 256;
+    canvas.height = 80;
     
-    // Convert color to hex string for canvas
-    const colorHex = load.color || '#' + color.toString(16).padStart(6, '0');
-    context.fillStyle = colorHex;
-    context.font = '32px Arial';
+    // Clear to fully transparent
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // Solid dark text, bold weight
+    context.fillStyle = '#1a1a1a';
+    context.font = 'bold 42px Arial, sans-serif';
     context.textAlign = 'center';
     context.textBaseline = 'middle';
-    context.fillText(`${load.magnitude.toFixed(1)} kN`, 80, 32);
+    context.fillText(`${load.magnitude.toFixed(1)} kN`, 128, 40);
     
     const texture = new THREE.CanvasTexture(canvas);
-    const spriteMaterial = new THREE.SpriteMaterial({ map: texture });
+    texture.minFilter = THREE.LinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    const spriteMaterial = new THREE.SpriteMaterial({ 
+        map: texture, 
+        transparent: true,
+        depthTest: false 
+    });
     const sprite = new THREE.Sprite(spriteMaterial);
-    sprite.scale.set(0.5, 0.25, 1);
-    sprite.position.copy(loadPosition).add(new THREE.Vector3(0.3, 0.3, 0));
+    sprite.scale.set(0.6, 0.2, 1);
+    // Offset label perpendicular to load direction to avoid arrow stem
+    const labelOffset = new THREE.Vector3(0.4, 0, 0.3);
+    if (load.direction === 'x') labelOffset.set(0, 0.4, 0.3);
+    else if (load.direction === 'z') labelOffset.set(0.4, 0.3, 0);
+    sprite.position.copy(loadPosition).add(labelOffset);
+    sprite.renderOrder = 100;
     group.add(sprite);
     
     return group;
@@ -429,26 +442,39 @@ function createDistributedLoadVisual(load, beam) {
     const line = new THREE.Line(lineGeometry, lineMaterial);
     group.add(line);
     
-    // Add label
+    // Add label - solid dark text, offset from arrows
     const canvas = document.createElement('canvas');
     const context = canvas.getContext('2d');
-    canvas.width = 180;
-    canvas.height = 64;
+    canvas.width = 280;
+    canvas.height = 80;
     
-    // Convert color to hex string for canvas
-    const colorHex = load.color || '#' + color.toString(16).padStart(6, '0');
-    context.fillStyle = colorHex;
-    context.font = '28px Arial';
+    // Clear to fully transparent
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // Solid dark text, bold weight
+    context.fillStyle = '#1a1a1a';
+    context.font = 'bold 38px Arial, sans-serif';
     context.textAlign = 'center';
     context.textBaseline = 'middle';
-    context.fillText(`${load.magnitude.toFixed(1)} kN/m`, 90, 32);
+    context.fillText(`${load.magnitude.toFixed(1)} kN/m`, 140, 40);
     
     const texture = new THREE.CanvasTexture(canvas);
-    const spriteMaterial = new THREE.SpriteMaterial({ map: texture });
+    texture.minFilter = THREE.LinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    const spriteMaterial = new THREE.SpriteMaterial({ 
+        map: texture, 
+        transparent: true,
+        depthTest: false 
+    });
     const sprite = new THREE.Sprite(spriteMaterial);
-    sprite.scale.set(0.7, 0.3, 1);
+    sprite.scale.set(0.7, 0.2, 1);
     const midPoint = loadStart.clone().lerp(loadEnd, 0.5);
-    sprite.position.copy(midPoint).add(new THREE.Vector3(0.4, 0.4, 0));
+    // Offset label perpendicular to load direction to avoid arrow stems
+    const labelOffset = new THREE.Vector3(0.5, 0, 0.4);
+    if (load.direction === 'x') labelOffset.set(0, 0.5, 0.4);
+    else if (load.direction === 'z') labelOffset.set(0.5, 0.4, 0);
+    sprite.position.copy(midPoint).add(labelOffset);
+    sprite.renderOrder = 100;
     group.add(sprite);
     
     group.position.set(0, 0, 0);
@@ -704,23 +730,18 @@ function createPressureLoadVisual(load, plate) {
         const canvas = document.createElement('canvas');
         const context = canvas.getContext('2d');
         // Higher resolution for crisp text
-        canvas.width = 512;
-        canvas.height = 128;
+        canvas.width = 320;
+        canvas.height = 96;
         
-        // Transparent background - no white box
+        // Clear to fully transparent - no white background
         context.clearRect(0, 0, canvas.width, canvas.height);
         
-        // Professional text with shadow for readability
-        context.shadowColor = 'rgba(255, 255, 255, 0.9)';
-        context.shadowBlur = 8;
-        context.shadowOffsetX = 0;
-        context.shadowOffsetY = 0;
-        
-        context.fillStyle = '#1e293b'; // Dark slate color
-        context.font = '600 48px Inter, system-ui, -apple-system, sans-serif';
+        // Solid dark text, bold weight - no shadow effects
+        context.fillStyle = '#1a1a1a';
+        context.font = 'bold 44px Arial, sans-serif';
         context.textAlign = 'center';
         context.textBaseline = 'middle';
-        context.fillText(`${load.magnitude.toFixed(1)} kPa`, 256, 64);
+        context.fillText(`${load.magnitude.toFixed(1)} kPa`, 160, 48);
         
         const texture = new THREE.CanvasTexture(canvas);
         texture.minFilter = THREE.LinearFilter;
@@ -732,8 +753,10 @@ function createPressureLoadVisual(load, plate) {
             depthWrite: false
         });
         const sprite = new THREE.Sprite(spriteMaterial);
-        sprite.scale.set(1.5, 0.375, 1); // Smaller, more compact
-        sprite.position.copy(labelPos);
+        sprite.scale.set(1.0, 0.3, 1); // Match canvas aspect ratio 320:96
+        // Offset label slightly from arrows
+        const labelPosOffset = labelPos.clone().add(new THREE.Vector3(0.3, 0.2, 0.3));
+        sprite.position.copy(labelPosOffset);
         sprite.renderOrder = 100; // Render on top
         group.add(sprite);
     }

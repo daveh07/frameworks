@@ -706,7 +706,10 @@ export function handleAddNodeClick(sceneData, event) {
         Math.round(point.z)
     );
 
-    createNode(nodesGroup, snapped);
+    const node = createNode(nodesGroup, snapped);
+    if (!node) {
+        console.log('Cannot create node: a node already exists at this location');
+    }
 }
 
 /**

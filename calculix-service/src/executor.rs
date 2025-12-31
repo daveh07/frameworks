@@ -116,6 +116,7 @@ impl CalculiXExecutor {
             beam_forces: Vec::new(),
             max_displacement: 0.0,
             max_stress: 0.0,
+            max_beam_stress: 0.0,
         };
 
         // Calculate max original node ID to distinguish top/bottom nodes
@@ -127,7 +128,7 @@ impl CalculiXExecutor {
         let mut element_stresses: std::collections::HashMap<usize, Vec<crate::models::ElementStress>> = std::collections::HashMap::new();
         let mut seen_node_ids: std::collections::HashSet<usize> = std::collections::HashSet::new();
 
-        let mut current_section = ""; // "displacements", "forces", "stresses", "beam_sf"
+        let mut current_section = ""; // "displacements", "forces", "stresses"
 
         for line in content.lines() {
             let line_lower = line.to_lowercase();
@@ -141,10 +142,6 @@ impl CalculiXExecutor {
             } else if line_lower.contains("total forces") && line_lower.contains("fx") {
                 current_section = "forces";
                 tracing::info!("Found forces section: {}", line);
-                continue;
-            } else if line_lower.contains("section forces") || (line_lower.contains("sf1") && line_lower.contains("sf2")) {
-                current_section = "beam_sf";
-                tracing::info!("Found beam section forces section: {}", line);
                 continue;
             } else if line_lower.contains("stresses") {
                 current_section = "stresses";
@@ -210,37 +207,8 @@ impl CalculiXExecutor {
                         }
                     }
                 },
-                "beam_sf" => {
-                    // Format for *EL PRINT, SF: element_id int_pt SF1 SF2 SF3 SF4 SF5 SF6
-                    // SF1=N (axial), SF2=Vy, SF3=Vz, SF4=T (torsion), SF5=My, SF6=Mz
-                    if parts.len() >= 8 {
-                        if let Ok(elem_id) = parts[0].parse::<usize>() {
-                            // Parse section force values (skip integration point)
-                            let mut sf_values = vec![];
-                            for part in &parts[2..] {
-                                if let Ok(val) = part.parse::<f64>() {
-                                    sf_values.push(val);
-                                } else {
-                                    break;
-                                }
-                            }
-                            
-                            if sf_values.len() >= 6 {
-                                results.beam_forces.push(BeamForces {
-                                    element_id: elem_id - 1, // Convert to 0-based
-                                    axial_force: sf_values[0],
-                                    shear_y: sf_values[1],
-                                    shear_z: sf_values[2],
-                                    torsion: sf_values[3],
-                                    moment_y: sf_values[4],
-                                    moment_z: sf_values[5],
-                                });
-                            }
-                        }
-                    }
-                },
                 "stresses" => {
-                    // Format for *EL PRINT ... OUTPUT=3D: element_id int_pt sxx syy szz sxy syz szx
+                    // Format for *EL PRINT: element_id int_pt sxx syy szz sxy syz szx
                     
                     if parts.len() < 8 {
                         continue;
@@ -265,19 +233,57 @@ impl CalculiXExecutor {
                             let syz = numeric_parts[4];
                             let szx = numeric_parts[5];
                             
-                            // Von Mises stress (always positive magnitude - this is the correct definition)
+                            // Von Mises stress (always positive magnitude)
                             let vm = (0.5 * ((sxx-syy).powi(2) + (syy-szz).powi(2) + (szz-sxx).powi(2) + 6.0*(sxy.powi(2) + syz.powi(2) + szx.powi(2)))).sqrt();
                             
-                            // Store element stress data
-                            // We'll process this after reading all lines to determine Top/Bottom layers
-                            element_stresses.entry(elem_id)
-                                .or_insert_with(Vec::new)
-                                .push(ElementStress {
-                                    element_id: elem_id,
-                                    integration_point: int_pt,
-                                    von_mises: vm, // Von Mises is always positive
-                                    sxx, syy, szz, sxy, syz, szx,
-                                });
+                            // Check if this is a beam element (ID < 1000001) or shell element
+                            if elem_id < 1000001 {
+                                // Beam element - store von Mises stress directly
+                                let beam_idx = elem_id - 1; // 0-based index
+                                
+                                // Track maximum stress for this beam
+                                // Beams output stresses at multiple integration points
+                                let existing = results.beam_forces.iter_mut().find(|bf| bf.element_id == beam_idx);
+                                if let Some(bf) = existing {
+                                    // Update if this stress is higher
+                                    if vm > bf.combined_stress {
+                                        bf.combined_stress = vm;
+                                        bf.bending_stress = vm; // For beam stresses, use VM as combined
+                                    }
+                                } else {
+                                    // First stress entry for this beam
+                                    results.beam_forces.push(BeamForces {
+                                        element_id: beam_idx,
+                                        axial_force: sxx, // Axial stress (approximate)
+                                        shear_y: sxy,
+                                        shear_z: szx,
+                                        torsion: 0.0,
+                                        moment_y: 0.0,
+                                        moment_z: 0.0,
+                                        combined_stress: vm,
+                                        axial_stress: sxx,
+                                        bending_stress: vm,
+                                    });
+                                }
+                                
+                                // Update max beam stress
+                                if vm > results.max_beam_stress {
+                                    results.max_beam_stress = vm;
+                                }
+                                
+                                tracing::debug!("Beam {} int_pt {}: VM={:.2}MPa, sxx={:.2}MPa", 
+                                    beam_idx, int_pt, vm / 1e6, sxx / 1e6);
+                            } else {
+                                // Shell element - store for later processing
+                                element_stresses.entry(elem_id)
+                                    .or_insert_with(Vec::new)
+                                    .push(ElementStress {
+                                        element_id: elem_id,
+                                        integration_point: int_pt,
+                                        von_mises: vm,
+                                        sxx, syy, szz, sxy, syz, szx,
+                                    });
+                            }
                         }
                     }
                 },

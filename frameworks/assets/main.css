@@ -1215,6 +1215,48 @@ input:focus, select:focus, textarea:focus {
    Analysis Panel Styles
    ============================================ */
 
+/* Analysis Panel Header */
+.analysis-panel .panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 12px;
+    background: #f8f9fa;
+    border-bottom: 1px solid #dee2e6;
+}
+
+.analysis-panel .panel-header h3 {
+    margin: 0;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #212529;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.analysis-panel .panel-header .close-button {
+    background: none;
+    border: none;
+    color: #6c757d;
+    cursor: pointer;
+    font-size: 18px;
+    font-weight: 400;
+    padding: 0;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    transition: all 0.15s ease;
+    line-height: 1;
+}
+
+.analysis-panel .panel-header .close-button:hover {
+    background: #e9ecef;
+    color: #212529;
+}
+
 .analysis-panel .results-container {
     margin-top: 1rem;
     padding: 1rem;
@@ -1333,6 +1375,217 @@ input:focus, select:focus, textarea:focus {
     margin-bottom: 0.25rem;
 }
 
+/* Analysis Panel Results Section - Professional FEA Styling */
+.analysis-panel .results-section {
+    margin-top: 1rem;
+    padding: 0.75rem;
+    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    border: 1px solid #dee2e6;
+    border-radius: 6px;
+}
+
+.analysis-panel .results-header {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #28a745;
+    margin-bottom: 0.5rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid #dee2e6;
+}
+
+.analysis-panel .results-info {
+    font-size: 0.75rem;
+    color: #6c757d;
+    margin-bottom: 0.75rem;
+}
+
+.analysis-panel .diagram-controls {
+    margin-bottom: 1rem;
+}
+
+.analysis-panel .control-group-label {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    color: #495057;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 0.5rem;
+}
+
+.analysis-panel .button-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+}
+
+.analysis-panel .diagram-btn {
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    background: #fff;
+    border: 1px solid #ced4da;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: #495057;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    text-align: left;
+}
+
+.analysis-panel .diagram-btn:hover {
+    background: #e9ecef;
+    border-color: #0066cc;
+    color: #0066cc;
+}
+
+.analysis-panel .diagram-btn:active {
+    background: #dee2e6;
+}
+
+.analysis-panel .contour-controls {
+    margin-bottom: 1rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid #dee2e6;
+}
+
+.analysis-panel .control-row {
+    margin-bottom: 0.5rem;
+}
+
+.analysis-panel .control-row label {
+    display: block;
+    font-size: 0.6875rem;
+    font-weight: 500;
+    color: #6c757d;
+    margin-bottom: 0.25rem;
+}
+
+.analysis-panel .contour-select {
+    width: 100%;
+    padding: 0.375rem 0.5rem;
+    background: #fff;
+    border: 1px solid #ced4da;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    color: #495057;
+    cursor: pointer;
+}
+
+.analysis-panel .contour-select:focus {
+    outline: none;
+    border-color: #0066cc;
+    box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.1);
+}
+
+.analysis-panel .contour-btn {
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    margin-top: 0.5rem;
+    background: #0066cc;
+    border: none;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: #fff;
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+.analysis-panel .contour-btn:hover {
+    background: #0052a3;
+}
+
+.analysis-panel .action-controls {
+    display: flex;
+    gap: 0.5rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid #dee2e6;
+}
+
+.analysis-panel .clear-btn {
+    flex: 1;
+    padding: 0.375rem 0.5rem;
+    background: #fff;
+    border: 1px solid #dc3545;
+    border-radius: 4px;
+    font-size: 0.6875rem;
+    font-weight: 500;
+    color: #dc3545;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.analysis-panel .clear-btn:hover {
+    background: #dc3545;
+    color: #fff;
+}
+
+.analysis-panel .debug-btn {
+    flex: 1;
+    padding: 0.375rem 0.5rem;
+    background: #fff;
+    border: 1px solid #6c757d;
+    border-radius: 4px;
+    font-size: 0.6875rem;
+    font-weight: 500;
+    color: #6c757d;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.analysis-panel .debug-btn:hover {
+    background: #6c757d;
+    color: #fff;
+}
+
+/* Run Analysis Button */
+.analysis-panel .btn-analysis-run {
+    width: 100%;
+    padding: 0.625rem 1rem;
+    background: linear-gradient(135deg, #28a745 0%, #218838 100%);
+    border: none;
+    border-radius: 4px;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: #fff;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.analysis-panel .btn-analysis-run:hover:not(:disabled) {
+    background: linear-gradient(135deg, #218838 0%, #1e7e34 100%);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(40, 167, 69, 0.3);
+}
+
+.analysis-panel .btn-analysis-run:disabled {
+    background: #6c757d;
+    cursor: not-allowed;
+    opacity: 0.7;
+}
+
+/* Analysis Error Display */
+.analysis-panel .analysis-error {
+    margin-top: 0.75rem;
+    padding: 0.625rem;
+    background: #f8d7da;
+    border: 1px solid #f5c6cb;
+    border-radius: 4px;
+}
+
+.analysis-panel .error-label {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    color: #721c24;
+    text-transform: uppercase;
+    margin-bottom: 0.25rem;
+}
+
+.analysis-panel .error-text {
+    font-size: 0.75rem;
+    color: #721c24;
+}
+
 .analysis-panel .info-section {
     margin-top: 1.5rem;
     padding-top: 1rem;
@@ -1383,3 +1636,542 @@ input:focus, select:focus, textarea:focus {
     font-size: 0.75rem;
 }
 
+/* ============================================
+   Property Panels (Beam, Shell, Material)
+   ============================================ */
+
+/* Section Type Buttons (Beam Properties) */
+.section-type-buttons {
+    display: flex;
+    gap: 4px;
+    margin-top: 4px;
+}
+
+.section-type-buttons button {
+    flex: 1;
+    padding: 8px 4px;
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.section-type-buttons button:hover {
+    background: #e9ecef;
+    border-color: #ced4da;
+}
+
+.section-type-buttons button.active {
+    background: var(--color-primary);
+    border-color: var(--color-primary);
+    color: white;
+}
+
+/* Material Presets (Material Properties) */
+.material-presets {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 4px;
+}
+
+.material-presets button {
+    flex: 1 1 calc(50% - 2px);
+    padding: 6px 8px;
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.material-presets button:hover {
+    background: #e9ecef;
+    border-color: #ced4da;
+}
+
+.material-presets button.active {
+    background: #2e7d32;
+    border-color: #2e7d32;
+    color: white;
+}
+
+/* Thickness Presets (Shell Properties) */
+.thickness-presets {
+    display: flex;
+    gap: 4px;
+    margin-top: 4px;
+}
+
+.thickness-presets button {
+    flex: 1;
+    padding: 6px 4px;
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.thickness-presets button:hover {
+    background: #e9ecef;
+    border-color: #ced4da;
+}
+
+.thickness-presets button.active {
+    background: var(--color-primary);
+    border-color: var(--color-primary);
+    color: white;
+}
+
+/* Element Type Buttons (Shell Properties) */
+.element-type-buttons {
+    display: flex;
+    gap: 8px;
+    margin-top: 4px;
+}
+
+.element-type-buttons label {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 11px;
+    transition: all 0.15s ease;
+}
+
+.element-type-buttons label:hover {
+    background: #e9ecef;
+}
+
+.element-type-buttons label.active {
+    background: #e3f2fd;
+    border-color: var(--color-primary);
+}
+
+.element-type-buttons input[type="radio"] {
+    accent-color: var(--color-primary);
+}
+
+/* Section Preview SVG */
+.section-preview {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin-top: 8px;
+    padding: 12px;
+    background: #fff;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+}
+
+.section-preview svg {
+    max-width: 100%;
+    height: auto;
+}
+
+/* Shell Preview */
+.shell-preview {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin-top: 8px;
+    padding: 16px;
+    background: #fff;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+}
+
+/* Calculated Properties Display */
+.calculated-props {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-top: 8px;
+    padding: 10px;
+    background: #e8f5e9;
+    border: 1px solid #c8e6c9;
+    border-radius: 4px;
+}
+
+.calculated-props .prop-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.calculated-props .prop-label {
+    font-size: 9px;
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.calculated-props .prop-value {
+    font-size: 12px;
+    font-weight: 600;
+    color: #2e7d32;
+    font-family: var(--font-mono);
+}
+
+/* Derived Properties (Material) */
+.derived-props {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-top: 12px;
+    padding: 10px;
+    background: #f3e5f5;
+    border: 1px solid #e1bee7;
+    border-radius: 4px;
+}
+
+.derived-props .prop-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.derived-props .prop-label {
+    font-size: 9px;
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.derived-props .prop-value {
+    font-size: 12px;
+    font-weight: 600;
+    color: #7b1fa2;
+    font-family: var(--font-mono);
+}
+
+/* Properties Summary (Analysis Panel) */
+.props-summary {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px;
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+}
+
+.summary-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.summary-label {
+    font-size: 11px;
+    color: #666;
+}
+
+.summary-value {
+    font-size: 11px;
+    font-weight: 600;
+    color: #333;
+    font-family: var(--font-mono);
+}
+
+/* Button sizing */
+.btn-lg {
+    width: 100%;
+    padding: 12px 16px;
+    font-size: 12px;
+}
+
+/* Utility classes */
+.mt-2 {
+    margin-top: 0.5rem;
+}
+
+/* Input Grid for dimensions */
+.input-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+.input-grid .property-group {
+    margin-bottom: 0;
+}
+
+
+/* ============================================
+   Professional Analysis Panel Styles
+   ============================================ */
+
+.analysis-section {
+    margin-bottom: var(--spacing-xl);
+    padding: var(--spacing-lg);
+    background: #ffffff;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+}
+
+.section-title {
+    font-size: var(--text-md);
+    font-weight: 600;
+    color: var(--color-text);
+    margin-bottom: var(--spacing-lg);
+    padding-bottom: var(--spacing-md);
+    border-bottom: 2px solid var(--color-primary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+/* Properties Grid */
+.properties-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--spacing-sm);
+}
+
+.prop-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--spacing-sm) var(--spacing-md);
+    background: var(--color-bg-tertiary);
+    border-radius: var(--radius-sm);
+}
+
+.prop-label {
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+    font-weight: 500;
+}
+
+.prop-value {
+    font-size: var(--text-sm);
+    color: var(--color-text);
+    font-weight: 600;
+    font-family: var(--font-mono);
+}
+
+/* Analysis Run Button */
+.btn-analysis-run {
+    width: 100%;
+    padding: var(--spacing-lg);
+    background: var(--color-primary);
+    color: #ffffff;
+    font-size: var(--text-md);
+    font-weight: 600;
+    border: none;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: var(--transition);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.btn-analysis-run:hover:not(:disabled) {
+    background: var(--color-primary-dark);
+    box-shadow: var(--shadow-md);
+}
+
+.btn-analysis-run:disabled {
+    background: var(--color-border);
+    color: var(--color-text-muted);
+    cursor: not-allowed;
+}
+
+/* Analysis Error */
+.analysis-error {
+    margin-top: var(--spacing-lg);
+    padding: var(--spacing-md);
+    background: #fff3cd;
+    border: 1px solid #ffc107;
+    border-radius: var(--radius-md);
+}
+
+.error-label {
+    font-size: var(--text-xs);
+    font-weight: 700;
+    color: #856404;
+    text-transform: uppercase;
+    margin-bottom: var(--spacing-xs);
+}
+
+.error-text {
+    font-size: var(--text-sm);
+    color: #856404;
+}
+
+/* Results Data Table */
+.results-data {
+    margin-top: var(--spacing-md);
+}
+
+.data-table {
+    background: #ffffff;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+}
+
+.table-header {
+    padding: var(--spacing-md);
+    background: var(--color-bg-panel);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--color-text);
+    border-bottom: 1px solid var(--color-border);
+}
+
+.table-loading {
+    padding: var(--spacing-xl);
+    text-align: center;
+    color: var(--color-text-secondary);
+    font-size: var(--text-sm);
+}
+
+.results-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--text-xs);
+}
+
+.results-table thead {
+    background: var(--color-bg-tertiary);
+}
+
+.results-table th {
+    padding: var(--spacing-sm) var(--spacing-md);
+    text-align: right;
+    font-weight: 600;
+    color: var(--color-text);
+    border-bottom: 2px solid var(--color-border);
+    white-space: nowrap;
+}
+
+.results-table th:first-child {
+    text-align: left;
+}
+
+.results-table td {
+    padding: var(--spacing-sm) var(--spacing-md);
+    text-align: right;
+    font-family: var(--font-mono);
+    border-bottom: 1px solid var(--color-border-light);
+}
+
+.results-table td:first-child {
+    text-align: left;
+    font-weight: 600;
+}
+
+.results-table tbody tr:hover {
+    background: var(--color-bg-tertiary);
+}
+
+/* Post-Processing Controls */
+.postproc-controls {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-md);
+    margin-bottom: var(--spacing-lg);
+}
+
+.control-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-xs);
+}
+
+.control-label {
+    font-size: var(--text-xs);
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.control-select {
+    padding: var(--spacing-sm) var(--spacing-md);
+    font-size: var(--text-sm);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: #ffffff;
+    color: var(--color-text);
+    cursor: pointer;
+}
+
+.control-select:hover {
+    border-color: var(--color-primary);
+}
+
+.btn-postproc {
+    padding: var(--spacing-md);
+    background: var(--color-primary);
+    color: #ffffff;
+    font-size: var(--text-sm);
+    font-weight: 600;
+    border: none;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    transition: var(--transition);
+}
+
+.btn-postproc:hover {
+    background: var(--color-primary-dark);
+}
+
+/* Diagram Buttons */
+.diagram-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+}
+
+.btn-diagram {
+    padding: var(--spacing-md);
+    background: #ffffff;
+    color: var(--color-text);
+    font-size: var(--text-sm);
+    font-weight: 500;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    text-align: left;
+    transition: var(--transition);
+}
+
+.btn-diagram:hover {
+    background: var(--color-bg-tertiary);
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+}
+
+.btn-diagram-clear {
+    padding: var(--spacing-md);
+    background: #ffffff;
+    color: var(--color-error);
+    font-size: var(--text-sm);
+    font-weight: 500;
+    border: 1px solid var(--color-error);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.btn-diagram-clear:hover {
+    background: var(--color-error);
+    color: #ffffff;
+}

@@ -186,54 +186,49 @@ pub fn AnalysisPanel(
                 }
                         
                         if show_results() {
-                            div { class: "results-section",
-                                div { class: "results-header",
-                                    "Analysis Complete"
+                            div { class: "section mt-4",
+                                h4 { "Analysis Complete!" }
+                                
+                                p { class: "help-text",
+                                    "Results have been calculated. Use the buttons below to visualize."
                                 }
                                 
-                                p { class: "results-info",
-                                    "Results calculated. Visualize below."
-                                }
-                                
-                                // Diagram buttons
-                                div { class: "diagram-controls",
-                                    div { class: "control-group-label", "Diagrams" }
-                                    div { class: "button-row",
-                                        button {
-                                            class: "diagram-btn",
-                                            onclick: move |_| {
-                                                eval("window.showBendingMomentDiagram()");
-                                            },
-                                            "Bending Moment"
-                                        }
-                                        button {
-                                            class: "diagram-btn",
-                                            onclick: move |_| {
-                                                eval("window.showShearForceDiagram()");
-                                            },
-                                            "Shear Force"
-                                        }
-                                        button {
-                                            class: "diagram-btn",
-                                            onclick: move |_| {
-                                                eval("window.showDeformedShape()");
-                                            },
-                                            "Deformed Shape"
-                                        }
+                                // Visualization controls
+                                div { class: "visualization-controls mt-3",
+                                    h5 { "Diagrams" }
+                                    button {
+                                        class: "btn btn-secondary btn-sm",
+                                        onclick: move |_| {
+                                            eval("window.showBendingMomentDiagram()");
+                                        },
+                                        "📊 Bending Moment"
                                     }
-                                }
+                                    button {
+                                        class: "btn btn-secondary btn-sm ml-2",
+                                        onclick: move |_| {
+                                            eval("window.showShearForceDiagram()");
+                                        },
+                                        "📈 Shear Force"
+                                    }
+                                    button {
+                                        class: "btn btn-secondary btn-sm ml-2",
+                                        onclick: move |_| {
+                                            eval("window.showDeformedShape()");
+                                        },
+                                        "🔄 Deformed Shape"
+                                    }
                                     
-                                // Contour Plot Section
-                                div { class: "contour-controls",
-                                    div { class: "control-group-label", "Contour Plots" }
+                                    // Contour Plot Section
+                                    h5 { class: "mt-3", "Contour Plots" }
                                     
-                                    div { class: "control-row",
+                                    // Contour type dropdown
+                                    div { class: "property-group",
                                         label { "Result Type" }
                                         select {
-                                            class: "contour-select",
                                             value: "{selected_contour}",
                                             onchange: move |evt| selected_contour.set(evt.value()),
                                             
+                                            // Stress results
                                             optgroup { label: "Stress",
                                                 option { value: "von_mises", "Von Mises Stress" }
                                                 option { value: "sxx", "σxx (Normal X)" }
@@ -242,12 +237,14 @@ pub fn AnalysisPanel(
                                                 option { value: "sxy", "σxy (Shear XY)" }
                                             }
                                             
+                                            // Principal stresses
                                             optgroup { label: "Principal Stresses",
                                                 option { value: "principal_1", "σ₁ (Maximum)" }
                                                 option { value: "principal_2", "σ₂ (Minimum)" }
                                                 option { value: "principal_3", "σ₃ (Out-of-plane)" }
                                             }
                                             
+                                            // Displacement results
                                             optgroup { label: "Displacement",
                                                 option { value: "displacement_magnitude", "Total Displacement" }
                                                 option { value: "dx", "Displacement X" }
@@ -257,10 +254,10 @@ pub fn AnalysisPanel(
                                         }
                                     }
                                     
-                                    div { class: "control-row",
+                                    // Surface selection (for shell stresses)
+                                    div { class: "property-group",
                                         label { "Surface" }
                                         select {
-                                            class: "contour-select",
                                             value: "{selected_surface}",
                                             onchange: move |evt| selected_surface.set(evt.value()),
                                             option { value: "middle", "Mid-Plane" }
@@ -269,32 +266,34 @@ pub fn AnalysisPanel(
                                         }
                                     }
                                     
+                                    // Show Contour button
                                     button {
-                                        class: "contour-btn",
+                                        class: "btn btn-primary btn-sm mt-2",
                                         onclick: move |_| {
                                             let contour = selected_contour();
                                             let surface = selected_surface();
                                             eval(&format!("window.showContour('{}', '{}')", contour, surface));
                                         },
-                                        "Show Contour"
+                                        "🎨 Show Contour"
                                     }
-                                }
-                                
-                                // Actions
-                                div { class: "action-controls",
+                                    
                                     button {
-                                        class: "clear-btn",
+                                        class: "btn btn-secondary btn-sm mt-3",
                                         onclick: move |_| {
                                             eval("window.clearDiagrams()");
                                         },
-                                        "Clear Diagrams"
+                                        "❌ Clear All"
                                     }
+                                }
+                                
+                                // Show results in console
+                                div { class: "mt-3",
                                     button {
-                                        class: "debug-btn",
+                                        class: "btn btn-sm",
                                         onclick: move |_| {
                                             eval("console.log('Analysis Results:', window.analysisResults)");
                                         },
-                                        "Log Results"
+                                        "View Results in Console"
                                     }
                                 }
                             }

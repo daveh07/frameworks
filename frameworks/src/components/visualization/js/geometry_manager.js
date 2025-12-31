@@ -158,9 +158,16 @@ export function findBeamBetweenPositions(beamsGroup, pos1, pos2) {
  * @param {THREE.Group} nodesGroup
  * @param {THREE.Vector3} position
  * @param {boolean} skipLabelUpdate - Skip label update (for bulk operations)
- * @returns {THREE.Mesh}
+ * @returns {THREE.Mesh|null} - Returns null if node already exists at position
  */
 export function createNode(nodesGroup, position, skipLabelUpdate = false) {
+    // Check for duplicate node at this position
+    const existingNode = findNodeAtPosition(nodesGroup, position);
+    if (existingNode) {
+        console.log(`Node already exists at (${position.x}, ${position.y}, ${position.z}) with ID ${existingNode.userData.id}`);
+        return null;
+    }
+
     const nodeGeom = new THREE.SphereGeometry(0.07, 12, 12);
     const nodeMat = new THREE.MeshStandardMaterial({
         color: 0xcccccc,
@@ -200,13 +207,13 @@ export function createBeam(beamsGroup, startPos, endPos, startNode = null, endNo
 
     const direction = new THREE.Vector3().subVectors(endPos, startPos);
     const beamLength = direction.length();
-    const beamRadius = 0.025;
+    const beamRadius = 0.02;  // Thinner beam
     const beamSegments = 16;
     
     const beamGeom = new THREE.CylinderGeometry(beamRadius, beamRadius, beamLength, beamSegments);
     const beamMat = new THREE.MeshStandardMaterial({
-        color: 0x0077ff,
-        emissive: 0x0033ff,
+        color: 0x2255aa,       // Navy blue
+        emissive: 0x1133aa,    // Navy blue emissive
         emissiveIntensity: 0.8,
         metalness: 0.3,
         roughness: 0.4

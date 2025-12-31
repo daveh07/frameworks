@@ -123,6 +123,23 @@ async fn analyze_handler(
         request.model.point_loads.len(),
         request.model.distributed_loads.len(),
         request.model.pressure_loads.len());
+    
+    // Debug: Log support details
+    for (i, support) in request.model.supports.iter().enumerate() {
+        tracing::info!("  Support {}: node_id={}, type={:?}", i, support.node_id, support.constraint_type);
+    }
+    
+    // Debug: Log material
+    tracing::info!("  Material: E={}, nu={}, density={}", 
+        request.model.material.elastic_modulus,
+        request.model.material.poisson_ratio,
+        request.model.material.density);
+    
+    // Debug: Log beam section
+    if let Some(beam) = request.model.beams.first() {
+        tracing::info!("  Beam section: {:?} {}x{}", 
+            beam.section.section_type, beam.section.width, beam.section.height);
+    }
 
     // 1. Validate model
     validate_model(&request.model)?;

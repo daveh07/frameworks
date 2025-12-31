@@ -143,6 +143,8 @@ pub struct AnalysisResults {
     pub beam_forces: Vec<BeamForces>, // NEW: Beam section forces
     pub max_displacement: f64,
     pub max_stress: f64,
+    /// Maximum beam stress (Pa) for beam elements
+    pub max_beam_stress: f64,
 }
 
 /// Beam section forces at stations along a beam element
@@ -161,6 +163,15 @@ pub struct BeamForces {
     pub moment_z: f64,
     /// Torsional moment (Mx)
     pub torsion: f64,
+    /// Calculated combined stress (Pa) - Von Mises equivalent
+    #[serde(default)]
+    pub combined_stress: f64,
+    /// Axial stress (Pa) = N/A
+    #[serde(default)]
+    pub axial_stress: f64,
+    /// Maximum bending stress (Pa) = M*y/I
+    #[serde(default)]
+    pub bending_stress: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

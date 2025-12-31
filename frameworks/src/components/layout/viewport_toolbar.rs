@@ -38,7 +38,10 @@ pub fn ViewportToolbar(
     show_distributed_load_panel: Signal<bool>,
     show_pressure_load_panel: Signal<bool>,
     show_analysis_panel: Signal<bool>,
-    show_mesh_panel: Signal<bool>
+    show_mesh_panel: Signal<bool>,
+    show_beam_properties: Signal<bool>,
+    show_shell_properties: Signal<bool>,
+    show_material_properties: Signal<bool>,
 ) -> Element {
     let mut grid_visible = use_signal(|| true);
     let mut axes_visible = use_signal(|| true);
@@ -224,25 +227,33 @@ pub fn ViewportToolbar(
                     
                     div { class: "toolbar-divider" }
                     
-                    // MATERIALS & PROPERTIES
+                    // PROPERTIES
                     div { class: "toolbar-section",
                         span { class: "toolbar-section-label", "Properties" }
                         div { class: "toolbar-section-buttons",
                             button {
                                 class: "tool-button-icon",
-                                title: "Materials",
+                                title: "Beam Properties",
                                 onclick: move |_| {
-                                    show_analysis_panel.set(!show_analysis_panel());
+                                    show_beam_properties.set(!show_beam_properties());
                                 },
-                                span { class: "btn-icon", dangerous_inner_html: ICON_MATERIAL }
+                                span { class: "btn-icon", dangerous_inner_html: ICON_BEAM }
                             }
                             button {
                                 class: "tool-button-icon",
-                                title: "Section Properties",
+                                title: "Shell/Plate Properties",
                                 onclick: move |_| {
-                                    show_analysis_panel.set(!show_analysis_panel());
+                                    show_shell_properties.set(!show_shell_properties());
                                 },
-                                span { class: "btn-icon", dangerous_inner_html: ICON_PROPERTIES }
+                                span { class: "btn-icon", dangerous_inner_html: ICON_PLATE }
+                            }
+                            button {
+                                class: "tool-button-icon",
+                                title: "Material Properties",
+                                onclick: move |_| {
+                                    show_material_properties.set(!show_material_properties());
+                                },
+                                span { class: "btn-icon", dangerous_inner_html: ICON_MATERIAL }
                             }
                         }
                     }
@@ -538,6 +549,8 @@ fn ViewOptionsToolbar() -> Element {
     let mut show_beam_labels = use_signal(|| false);
     let mut show_plate_labels = use_signal(|| false);
     let mut show_mesh_element_labels = use_signal(|| false);
+    let mut wireframe_mode = use_signal(|| true); // true = wireframe, false = solid
+    let mut nodes_visible = use_signal(|| true); // nodes visible by default
     
     rsx! {
         div { class: "view-options-toolbar",
@@ -550,6 +563,16 @@ fn ViewOptionsToolbar() -> Element {
                     eval(&format!("if (window.toggleNodeLabels) window.toggleNodeLabels({});", new_val));
                 },
                 "N"
+            }
+            button {
+                class: if nodes_visible() { "view-option-btn active" } else { "view-option-btn" },
+                title: "Toggle Nodes Visibility",
+                onclick: move |_| {
+                    let new_val = !nodes_visible();
+                    nodes_visible.set(new_val);
+                    eval(&format!("if (window.toggleNodesVisibility) window.toggleNodesVisibility({});", new_val));
+                },
+                "●"
             }
             button {
                 class: if show_beam_labels() { "view-option-btn active" } else { "view-option-btn" },
@@ -580,6 +603,17 @@ fn ViewOptionsToolbar() -> Element {
                     eval(&format!("if (window.toggleMeshElementLabels) window.toggleMeshElementLabels({});", new_val));
                 },
                 "E"
+            }
+            button {
+                class: if !wireframe_mode() { "view-option-btn active" } else { "view-option-btn" },
+                title: "Toggle Wireframe/Solid View (W)",
+                onclick: move |_| {
+                    let new_mode = !wireframe_mode();
+                    wireframe_mode.set(new_mode);
+                    // false = solid mode (pass true to setMeshSolidMode)
+                    eval(&format!("if (window.setMeshSolidMode) window.setMeshSolidMode({});", !new_mode));
+                },
+                "W"
             }
         }
     }
