@@ -253,27 +253,22 @@ function createFixedSymbol() {
 }
 
 /**
- * Create pinned support symbol (2D triangle)
+ * Create pinned support symbol (3D pyramid)
  * @returns {THREE.Group}
  */
 function createPinnedSymbol() {
     const group = new THREE.Group();
     const color = 0x33ff77; // Light green
     
-    // Create 2D triangle shape
-    const triangleShape = new THREE.Shape();
-    triangleShape.moveTo(0, 0);        // Top point (tip)
-    triangleShape.lineTo(-0.3, -0.4);  // Bottom left
-    triangleShape.lineTo(0.3, -0.4);   // Bottom right
-    triangleShape.lineTo(0, 0);        // Back to top
-    
-    const triangleGeom = new THREE.ShapeGeometry(triangleShape);
-    const triangleMat = new THREE.MeshBasicMaterial({
-        color: color,
-        side: THREE.DoubleSide
+    // Create 3D pyramid (cone with 4 sides)
+    const pyramidGeometry = new THREE.ConeGeometry(0.3, 0.4, 4);
+    const pyramidMaterial = new THREE.MeshBasicMaterial({ 
+        color: color
     });
-    const triangle = new THREE.Mesh(triangleGeom, triangleMat);
-    group.add(triangle);
+    const pyramid = new THREE.Mesh(pyramidGeometry, pyramidMaterial);
+    pyramid.position.y = -0.2;
+    pyramid.rotation.y = Math.PI / 4; // Rotate 45 degrees for square base
+    group.add(pyramid);
     
     return group;
 }
