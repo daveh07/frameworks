@@ -336,6 +336,8 @@ $env:CALCULIX_PATH="C:\CalculiX\bin\ccx.exe"
 # Windows (CMD):
 set CALCULIX_PATH=C:\CalculiX\bin\ccx.exe
 .\target\release\calculix-service.exe
+
+# run command: cargo run --release --bin calculix-service
 ```
 
 > **Note:** Replace `/path/to/frameworkz` with your actual project path. The `pkill` command ensures no stale processes are running.
