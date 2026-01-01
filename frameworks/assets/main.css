@@ -685,18 +685,58 @@ input:focus, select:focus, textarea:focus {
    Console Panel
    ============================================ */
 
+/* Console Splitter - drag handle */
+.console-splitter {
+    height: 6px;
+    background: var(--color-border);
+    cursor: ns-resize;
+    flex-shrink: 0;
+    position: relative;
+    transition: background 0.15s ease;
+}
+
+.console-splitter:hover,
+.console-splitter:active {
+    background: var(--color-primary);
+}
+
+.console-splitter::before {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: 40px;
+    height: 4px;
+    background: repeating-linear-gradient(
+        90deg,
+        var(--color-text-muted) 0px,
+        var(--color-text-muted) 2px,
+        transparent 2px,
+        transparent 6px
+    );
+    border-radius: 2px;
+    opacity: 0.5;
+}
+
+.console-splitter:hover::before {
+    opacity: 1;
+}
+
 .console-panel {
-    height: 150px;
+    height: 180px;
     flex-shrink: 0;
     background: var(--color-bg-panel);
     border-top: 1px solid var(--color-border);
-    overflow-y: auto;
-    padding: var(--spacing-md);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
 }
 
 .console-header {
   background: var(--color-bg-panel);
   height: 32px;
+  min-height: 32px;
   border-bottom: 1px solid var(--color-border);
   display: flex;
   align-items: center;
@@ -709,6 +749,28 @@ input:focus, select:focus, textarea:focus {
   font-size: var(--text-sm);
   font-weight: 600;
   color: var(--color-text);
+}
+
+.console-controls {
+  display: flex;
+  gap: var(--spacing-sm);
+}
+
+.console-btn {
+  background: transparent;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  padding: 2px 8px;
+  font-size: var(--text-xs);
+  cursor: pointer;
+  border-radius: 3px;
+  transition: var(--transition);
+}
+
+.console-btn:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+  border-color: var(--color-text-muted);
 }
 
 .console-tabs {
@@ -744,14 +806,25 @@ input:focus, select:focus, textarea:focus {
 .console-line {
   display: flex;
   gap: var(--spacing-md);
-  margin-bottom: var(--spacing-sm);
-  font-size: var(--text-sm);
-  line-height: 1.6;
+  margin-bottom: var(--spacing-xs);
+  font-size: 12px;
+  line-height: 1.5;
+  align-items: flex-start;
+}
+
+.console-timestamp {
+  color: var(--color-text-muted);
+  font-size: 11px;
+  min-width: 70px;
+  flex-shrink: 0;
+  opacity: 0.7;
 }
 
 .console-tag {
   font-weight: 600;
   flex-shrink: 0;
+  min-width: 70px;
+  font-size: 11px;
 }
 
 .console-tag-info {
@@ -760,6 +833,10 @@ input:focus, select:focus, textarea:focus {
 
 .console-tag-ready {
   color: #dcdcaa;
+}
+
+.console-tag-success {
+  color: #6a9955;
 }
 
 .console-tag-warning {
@@ -772,6 +849,7 @@ input:focus, select:focus, textarea:focus {
 
 .console-text {
   color: var(--color-text);
+  word-break: break-word;
 }
 
 

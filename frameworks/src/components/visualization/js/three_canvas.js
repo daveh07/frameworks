@@ -88,6 +88,8 @@ import {
     resetBeamColors,
     showBeamForcesSummary
 } from './analysis_diagrams.js';
+// Import beam analysis module (stiffness method calculations)
+import './beam_analysis.js';
 
 // Global scene data
 let sceneData = null;

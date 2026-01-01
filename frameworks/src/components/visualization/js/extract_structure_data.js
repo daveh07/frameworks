@@ -8,12 +8,13 @@ window.extractStructureData = function(material, defaultThickness) {
     }
 
     // Get beam section from global (set by analysis panel)
+    // Default to 250UB31 Steel I-Beam
     const beamSection = window.currentBeamSection || {
-        section_type: 'Rectangular',
-        width: 0.3,
-        height: 0.5,
-        flange_thickness: 0.02,
-        web_thickness: 0.015
+        section_type: 'IBeam',
+        width: 0.146,
+        height: 0.252,
+        flange_thickness: 0.0086,
+        web_thickness: 0.0061
     };
 
     console.log('=== Starting structure extraction ===');

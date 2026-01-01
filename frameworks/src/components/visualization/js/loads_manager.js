@@ -59,6 +59,12 @@ export function addPointLoad(loadData, sceneData) {
             const visual = createPointLoadVisual(load, beam);
             loadVisuals.set(load.id, visual);
             sceneData.scene.add(visual);
+            
+            // Log to console panel
+            if (window.addConsoleLine) {
+                const beamDisplayId = beam.userData.id || '?';
+                window.addConsoleLine('LOAD', `Point load ${load.magnitude.toFixed(1)} kN (${load.direction.toUpperCase()}) on Beam ${beamDisplayId}`, 'info');
+            }
         } else {
             console.warn('Beam not found for ID:', beamId);
         }
@@ -155,6 +161,12 @@ export function addPressureLoad(loadData, sceneData) {
             loadVisuals.set(load.id, visual);
             sceneData.scene.add(visual);
             console.log('Visual added to scene');
+            
+            // Log to console panel
+            if (window.addConsoleLine) {
+                const plateDisplayId = plate.userData.id || '?';
+                window.addConsoleLine('LOAD', `Pressure ${load.magnitude.toFixed(1)} kPa on Plate ${plateDisplayId}`, 'info');
+            }
         } else {
             console.warn('Plate not found for ID:', plateId);
         }
@@ -200,6 +212,12 @@ export function addDistributedLoad(loadData, sceneData) {
             const visual = createDistributedLoadVisual(load, beam);
             loadVisuals.set(load.id, visual);
             sceneData.scene.add(visual);
+            
+            // Log to console panel
+            if (window.addConsoleLine) {
+                const beamDisplayId = beam.userData.id || '?';
+                window.addConsoleLine('LOAD', `UDL ${load.magnitude.toFixed(1)} kN/m (${load.direction.toUpperCase()}) on Beam ${beamDisplayId}`, 'info');
+            }
         } else {
             console.warn('Beam not found for ID:', beamId);
         }
