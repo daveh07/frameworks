@@ -43,10 +43,15 @@ export function applyNodeConstraints(constraintData, sceneData) {
         createConstraintSymbol(node, supportType, constraintData, sceneData);
         
         // Store constraint data on the node
+        // supportType is { type: 'fixed'|'pinned'|'roller'|etc, freeDOF: string, springDOF: string }
         node.userData.constraint = {
             ...constraintData,
-            type: supportType
+            type: supportType.type,  // Extract string type from the object
+            freeDOF: supportType.freeDOF,
+            springDOF: supportType.springDOF
         };
+        
+        console.log(`Applied constraint type: ${supportType.type} to node`, node.userData.constraint);
     });
     
     console.log(`Constraints applied to ${selectedNodes.size} node(s)`);

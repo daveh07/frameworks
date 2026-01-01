@@ -313,23 +313,30 @@ impl CalculiXExecutor {
         
         #[derive(Default)]
         struct NodeStressAccumulator {
-            vm_bottom_sum: f64,
-            vm_bottom_count: usize,
-            vm_top_sum: f64,
-            vm_top_count: usize,
-            // Store stress components for proper mid-plane interpolation
+            // Store stress components so von Mises can be computed from averaged components.
             sxx_bottom_sum: f64,
             syy_bottom_sum: f64,
             szz_bottom_sum: f64,
             sxy_bottom_sum: f64,
             syz_bottom_sum: f64,
             szx_bottom_sum: f64,
+            bottom_count: usize,
+
+            sxx_middle_sum: f64,
+            syy_middle_sum: f64,
+            szz_middle_sum: f64,
+            sxy_middle_sum: f64,
+            syz_middle_sum: f64,
+            szx_middle_sum: f64,
+            middle_count: usize,
+
             sxx_top_sum: f64,
             syy_top_sum: f64,
             szz_top_sum: f64,
             sxy_top_sum: f64,
             syz_top_sum: f64,
             szx_top_sum: f64,
+            top_count: usize,
         }
         
         let mut node_stress_map: std::collections::HashMap<usize, NodeStressAccumulator> = std::collections::HashMap::new();
@@ -337,51 +344,65 @@ impl CalculiXExecutor {
         tracing::info!("Processing {} element stress entries", element_stresses.len());
         
         for (elem_id, stresses) in &element_stresses {
-            // For shell elements with OUTPUT=3D, CalculiX outputs stresses at section points:
-            // - First half of integration points: TOP surface (section point 1)
-            // - Second half of integration points: BOTTOM surface (section point 5)
-            // 
-            // S4 (4-node): 4 in-plane Gauss points × 2 surfaces = 8 total (1-4 top, 5-8 bottom)
-            // S8 (8-node): 9 in-plane Gauss points × 2 surfaces = 18 total (1-9 top, 10-18 bottom)
-            // S8R (reduced): 4 in-plane Gauss points × 2 surfaces = 8 total (1-4 top, 5-8 bottom)
-            
-            // Dynamically determine the cutoff based on max integration point for this element
-            let max_int_pt = stresses.iter().map(|s| s.integration_point).max().unwrap_or(8);
-            let cutoff = max_int_pt / 2;  // First half is top, second half is bottom
-            
-            let mut bottom_vm_sum = 0.0;
-            let mut bottom_count = 0;
-            let mut top_vm_sum = 0.0;
-            let mut top_count = 0;
-            
-            // Stress component sums for mid-plane interpolation
-            let mut top_sxx = 0.0; let mut top_syy = 0.0; let mut top_szz = 0.0;
-            let mut top_sxy = 0.0; let mut top_syz = 0.0; let mut top_szx = 0.0;
+            // Infer section-point grouping.
+            // If stresses are printed for 5 section points, max_int_pt is often divisible by 5
+            // (e.g., n_plane * 5). We'll then treat:
+            //   bottom = section point 1
+            //   middle = section point 3
+            //   top    = section point 5
+            // Otherwise, fall back to 2-surface grouping (split in half).
+            let max_int_pt = stresses.iter().map(|s| s.integration_point).max().unwrap_or(0);
+            if max_int_pt == 0 {
+                continue;
+            }
+
+            let (section_points, n_plane) = if max_int_pt % 5 == 0 {
+                (5usize, max_int_pt / 5)
+            } else if max_int_pt % 2 == 0 {
+                (2usize, max_int_pt / 2)
+            } else {
+                (2usize, max_int_pt / 2)
+            };
+
             let mut bottom_sxx = 0.0; let mut bottom_syy = 0.0; let mut bottom_szz = 0.0;
             let mut bottom_sxy = 0.0; let mut bottom_syz = 0.0; let mut bottom_szx = 0.0;
-            
+            let mut bottom_count = 0usize;
+
+            let mut middle_sxx = 0.0; let mut middle_syy = 0.0; let mut middle_szz = 0.0;
+            let mut middle_sxy = 0.0; let mut middle_syz = 0.0; let mut middle_szx = 0.0;
+            let mut middle_count = 0usize;
+
+            let mut top_sxx = 0.0; let mut top_syy = 0.0; let mut top_szz = 0.0;
+            let mut top_sxy = 0.0; let mut top_syz = 0.0; let mut top_szx = 0.0;
+            let mut top_count = 0usize;
+
+            // 1-based integration point indices
+            let bottom_start = 1usize;
+            let bottom_end = n_plane.max(1);
+            let middle_start = 2 * n_plane + 1;
+            let middle_end = 3 * n_plane;
+            let top_start = (section_points - 1) * n_plane + 1;
+            let top_end = section_points * n_plane;
+
             for s in stresses {
-                if s.integration_point <= cutoff {
-                    // TOP surface (first half of integration points)
-                    top_vm_sum += s.von_mises;
-                    top_sxx += s.sxx; top_syy += s.syy; top_szz += s.szz;
-                    top_sxy += s.sxy; top_syz += s.syz; top_szx += s.szx;
-                    top_count += 1;
-                } else {
-                    // BOTTOM surface (second half of integration points)
-                    bottom_vm_sum += s.von_mises;
+                let ip = s.integration_point;
+                if ip >= bottom_start && ip <= bottom_end {
                     bottom_sxx += s.sxx; bottom_syy += s.syy; bottom_szz += s.szz;
                     bottom_sxy += s.sxy; bottom_syz += s.syz; bottom_szx += s.szx;
                     bottom_count += 1;
+                } else if section_points == 5 && ip >= middle_start && ip <= middle_end {
+                    middle_sxx += s.sxx; middle_syy += s.syy; middle_szz += s.szz;
+                    middle_sxy += s.sxy; middle_syz += s.syz; middle_szx += s.szx;
+                    middle_count += 1;
+                } else if ip >= top_start && ip <= top_end {
+                    top_sxx += s.sxx; top_syy += s.syy; top_szz += s.szz;
+                    top_sxy += s.sxy; top_syz += s.syz; top_szx += s.szx;
+                    top_count += 1;
                 }
             }
-            
-            // Average von Mises for each surface
-            let elem_bottom_vm = if bottom_count > 0 { bottom_vm_sum / bottom_count as f64 } else { 0.0 };
-            let elem_top_vm = if top_count > 0 { top_vm_sum / top_count as f64 } else { 0.0 };
-            
-            // Average stress components for each surface
+
             let bc = bottom_count.max(1) as f64;
+            let mc = middle_count.max(1) as f64;
             let tc = top_count.max(1) as f64;
             
             // Map to Nodes
@@ -391,25 +412,31 @@ impl CalculiXExecutor {
                 if let Some(shell) = model.shells.get(shell_idx) {
                     for &node_id in &shell.node_ids {
                         let accum = node_stress_map.entry(node_id).or_default();
-                        accum.vm_bottom_sum += elem_bottom_vm;
-                        accum.vm_bottom_count += 1;
-                        accum.vm_top_sum += elem_top_vm;
-                        accum.vm_top_count += 1;
-                        
-                        // Accumulate stress components for mid-plane calculation
                         accum.sxx_bottom_sum += bottom_sxx / bc;
                         accum.syy_bottom_sum += bottom_syy / bc;
                         accum.szz_bottom_sum += bottom_szz / bc;
                         accum.sxy_bottom_sum += bottom_sxy / bc;
                         accum.syz_bottom_sum += bottom_syz / bc;
                         accum.szx_bottom_sum += bottom_szx / bc;
-                        
+                        accum.bottom_count += 1;
+
+                        if section_points == 5 && middle_count > 0 {
+                            accum.sxx_middle_sum += middle_sxx / mc;
+                            accum.syy_middle_sum += middle_syy / mc;
+                            accum.szz_middle_sum += middle_szz / mc;
+                            accum.sxy_middle_sum += middle_sxy / mc;
+                            accum.syz_middle_sum += middle_syz / mc;
+                            accum.szx_middle_sum += middle_szx / mc;
+                            accum.middle_count += 1;
+                        }
+
                         accum.sxx_top_sum += top_sxx / tc;
                         accum.syy_top_sum += top_syy / tc;
                         accum.szz_top_sum += top_szz / tc;
                         accum.sxy_top_sum += top_sxy / tc;
                         accum.syz_top_sum += top_syz / tc;
                         accum.szx_top_sum += top_szx / tc;
+                        accum.top_count += 1;
                     }
                 }
             }
@@ -426,23 +453,54 @@ impl CalculiXExecutor {
         // Build node stress results
         let mut sample_count = 0;
         for (node_id, accum) in node_stress_map {
-            let count = accum.vm_bottom_count.max(1) as f64;
-            
-            // Average von Mises for top and bottom surfaces
-            let vm_bottom = if accum.vm_bottom_count > 0 { Some(accum.vm_bottom_sum / accum.vm_bottom_count as f64) } else { None };
-            let vm_top = if accum.vm_top_count > 0 { Some(accum.vm_top_sum / accum.vm_top_count as f64) } else { None };
-            
-            // Calculate mid-plane stress by interpolating stress COMPONENTS (not von Mises)
-            // At neutral axis, stress components from top and bottom have opposite signs and average to ~0
-            let mid_sxx = (accum.sxx_bottom_sum + accum.sxx_top_sum) / (2.0 * count);
-            let mid_syy = (accum.syy_bottom_sum + accum.syy_top_sum) / (2.0 * count);
-            let mid_szz = (accum.szz_bottom_sum + accum.szz_top_sum) / (2.0 * count);
-            let mid_sxy = (accum.sxy_bottom_sum + accum.sxy_top_sum) / (2.0 * count);
-            let mid_syz = (accum.syz_bottom_sum + accum.syz_top_sum) / (2.0 * count);
-            let mid_szx = (accum.szx_bottom_sum + accum.szx_top_sum) / (2.0 * count);
-            
-            // Von Mises at mid-plane calculated from interpolated components
-            let vm_middle = calc_von_mises(mid_sxx, mid_syy, mid_szz, mid_sxy, mid_syz, mid_szx);
+            let bc = accum.bottom_count.max(1) as f64;
+            let tc = accum.top_count.max(1) as f64;
+
+            let bottom_sxx = accum.sxx_bottom_sum / bc;
+            let bottom_syy = accum.syy_bottom_sum / bc;
+            let bottom_szz = accum.szz_bottom_sum / bc;
+            let bottom_sxy = accum.sxy_bottom_sum / bc;
+            let bottom_syz = accum.syz_bottom_sum / bc;
+            let bottom_szx = accum.szx_bottom_sum / bc;
+
+            let top_sxx = accum.sxx_top_sum / tc;
+            let top_syy = accum.syy_top_sum / tc;
+            let top_szz = accum.szz_top_sum / tc;
+            let top_sxy = accum.sxy_top_sum / tc;
+            let top_syz = accum.syz_top_sum / tc;
+            let top_szx = accum.szx_top_sum / tc;
+
+            // Von Mises is always non-negative.
+            let vm_bottom = if accum.bottom_count > 0 {
+                Some(calc_von_mises(bottom_sxx, bottom_syy, bottom_szz, bottom_sxy, bottom_syz, bottom_szx))
+            } else {
+                None
+            };
+            let vm_top = if accum.top_count > 0 {
+                Some(calc_von_mises(top_sxx, top_syy, top_szz, top_sxy, top_syz, top_szx))
+            } else {
+                None
+            };
+
+            // Mid-plane: prefer explicit middle section-point data; else interpolate components.
+            let vm_middle = if accum.middle_count > 0 {
+                let mc = accum.middle_count as f64;
+                let mid_sxx = accum.sxx_middle_sum / mc;
+                let mid_syy = accum.syy_middle_sum / mc;
+                let mid_szz = accum.szz_middle_sum / mc;
+                let mid_sxy = accum.sxy_middle_sum / mc;
+                let mid_syz = accum.syz_middle_sum / mc;
+                let mid_szx = accum.szx_middle_sum / mc;
+                calc_von_mises(mid_sxx, mid_syy, mid_szz, mid_sxy, mid_syz, mid_szx)
+            } else {
+                let mid_sxx = 0.5 * (bottom_sxx + top_sxx);
+                let mid_syy = 0.5 * (bottom_syy + top_syy);
+                let mid_szz = 0.5 * (bottom_szz + top_szz);
+                let mid_sxy = 0.5 * (bottom_sxy + top_sxy);
+                let mid_syz = 0.5 * (bottom_syz + top_syz);
+                let mid_szx = 0.5 * (bottom_szx + top_szx);
+                calc_von_mises(mid_sxx, mid_syy, mid_szz, mid_sxy, mid_syz, mid_szx)
+            };
             
             // Log sample stresses to verify top/bottom/middle differentiation
             if sample_count < 5 {
