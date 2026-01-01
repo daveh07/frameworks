@@ -207,13 +207,13 @@ export function createBeam(beamsGroup, startPos, endPos, startNode = null, endNo
 
     const direction = new THREE.Vector3().subVectors(endPos, startPos);
     const beamLength = direction.length();
-    const beamRadius = 0.02;  // Thinner beam
+    const beamRadius = 0.025;
     const beamSegments = 16;
     
     const beamGeom = new THREE.CylinderGeometry(beamRadius, beamRadius, beamLength, beamSegments);
     const beamMat = new THREE.MeshStandardMaterial({
-        color: 0x2255aa,       // Navy blue
-        emissive: 0x1133aa,    // Navy blue emissive
+        color: 0x0077ff,
+        emissive: 0x0033ff,
         emissiveIntensity: 0.8,
         metalness: 0.3,
         roughness: 0.4

@@ -549,8 +549,6 @@ fn ViewOptionsToolbar() -> Element {
     let mut show_beam_labels = use_signal(|| false);
     let mut show_plate_labels = use_signal(|| false);
     let mut show_mesh_element_labels = use_signal(|| false);
-    let mut wireframe_mode = use_signal(|| true); // true = wireframe, false = solid
-    let mut nodes_visible = use_signal(|| true); // nodes visible by default
     
     rsx! {
         div { class: "view-options-toolbar",
@@ -563,16 +561,6 @@ fn ViewOptionsToolbar() -> Element {
                     eval(&format!("if (window.toggleNodeLabels) window.toggleNodeLabels({});", new_val));
                 },
                 "N"
-            }
-            button {
-                class: if nodes_visible() { "view-option-btn active" } else { "view-option-btn" },
-                title: "Toggle Nodes Visibility",
-                onclick: move |_| {
-                    let new_val = !nodes_visible();
-                    nodes_visible.set(new_val);
-                    eval(&format!("if (window.toggleNodesVisibility) window.toggleNodesVisibility({});", new_val));
-                },
-                "●"
             }
             button {
                 class: if show_beam_labels() { "view-option-btn active" } else { "view-option-btn" },
@@ -603,17 +591,6 @@ fn ViewOptionsToolbar() -> Element {
                     eval(&format!("if (window.toggleMeshElementLabels) window.toggleMeshElementLabels({});", new_val));
                 },
                 "E"
-            }
-            button {
-                class: if !wireframe_mode() { "view-option-btn active" } else { "view-option-btn" },
-                title: "Toggle Wireframe/Solid View (W)",
-                onclick: move |_| {
-                    let new_mode = !wireframe_mode();
-                    wireframe_mode.set(new_mode);
-                    // false = solid mode (pass true to setMeshSolidMode)
-                    eval(&format!("if (window.setMeshSolidMode) window.setMeshSolidMode({});", !new_mode));
-                },
-                "W"
             }
         }
     }
