@@ -150,33 +150,20 @@ export function extractStructureData(materialConfig, defaultThickness) {
             let supportType = "Fixed"; // Default
             
             // Map constraint types to support types
-            // constraint.type should be a string: "fixed", "pinned", "roller", "spring", "custom"
-            const constraintType = typeof constraint.type === 'string' 
-                ? constraint.type.toLowerCase() 
-                : (constraint.type?.type?.toLowerCase() || "fixed"); // Handle legacy object format
-            
-            console.log(`Node ${index} constraint type: "${constraintType}"`, constraint);
-            
-            if (constraintType === "fixed") {
+            if (constraint.type === "fixed") {
                 supportType = "Fixed";
-            } else if (constraintType === "pinned") {
+            } else if (constraint.type === "pinned") {
                 supportType = "Pinned";
-            } else if (constraintType === "roller") {
-                // Determine roller direction from freeDOF
-                const freeDOF = constraint.freeDOF || constraint.dof || "";
-                if (freeDOF.includes("x")) supportType = "RollerX";
-                else if (freeDOF.includes("y")) supportType = "RollerY";
-                else if (freeDOF.includes("z")) supportType = "RollerZ";
-                else supportType = "RollerY"; // Default roller in Y
-            } else if (constraintType === "spring") {
-                // Springs treated as pinned for basic analysis
-                supportType = "Pinned";
-            } else {
-                // Custom or unknown - default to fixed
-                supportType = "Fixed";
+            } else if (constraint.type === "roller") {
+                // Determine roller direction based on constraint
+                if (constraint.dof) {
+                    if (constraint.dof.includes("x")) supportType = "RollerX";
+                    else if (constraint.dof.includes("y")) supportType = "RollerY";
+                    else if (constraint.dof.includes("z")) supportType = "RollerZ";
+                } else {
+                    supportType = "RollerY"; // Default roller in Y
+                }
             }
-            
-            console.log(`  -> Mapped to support type: ${supportType}`);
             
             supports.push({
                 node_id: index,
@@ -184,9 +171,6 @@ export function extractStructureData(materialConfig, defaultThickness) {
             });
         }
     });
-    
-    console.log(`Total supports extracted: ${supports.length}`);
-    supports.forEach((s, i) => console.log(`  Support ${i}: node=${s.node_id}, type=${s.constraint_type}`));
 
     // Extract point loads
     const pointLoads = [];

@@ -114,9 +114,6 @@ function createHighResLabel(text, color) {
  * Find continuous beam chains (beams connected end-to-end)
  * Returns array of chains, each chain is array of beam indices in order
  * Also includes support types at chain endpoints
- * 
- * IMPORTANT: Only chains HORIZONTAL beams together. Vertical columns are treated
- * as separate elements to ensure symmetric frame analysis results.
  */
 function findContinuousBeamChains(beamsGroup) {
     const beams = beamsGroup.children;
@@ -137,37 +134,10 @@ function findContinuousBeamChains(beamsGroup) {
         return { start, end };
     };
     
-    // Check if a beam is primarily vertical (column) vs horizontal (beam)
-    // A beam is vertical if the Y component of direction dominates
-    const isVerticalBeam = (beam) => {
-        const ep = getEndpoints(beam);
-        if (!ep.start || !ep.end) return false;
-        
-        const dx = Math.abs(ep.end.x - ep.start.x);
-        const dy = Math.abs(ep.end.y - ep.start.y);
-        const dz = Math.abs(ep.end.z - ep.start.z);
-        
-        // Beam is vertical if Y component is dominant (> 70% of length)
-        const length = Math.sqrt(dx*dx + dy*dy + dz*dz);
-        return length > 0.01 && (dy / length) > 0.7;
-    };
-    
-    // Check if two beams have the same orientation (both horizontal or both vertical)
-    const sameOrientation = (beam1, beam2) => {
-        return isVerticalBeam(beam1) === isVerticalBeam(beam2);
-    };
-    
     // Find beam that connects to given position (not the excluded beam)
-    // Only connect beams of the same orientation (horizontal-to-horizontal)
-    const findConnectedBeam = (pos, excludeIdx, mustBeHorizontal) => {
+    const findConnectedBeam = (pos, excludeIdx) => {
         for (let i = 0; i < beams.length; i++) {
             if (i === excludeIdx || used.has(i)) continue;
-            
-            // Only chain horizontal beams with horizontal beams
-            const beamIsVertical = isVerticalBeam(beams[i]);
-            if (mustBeHorizontal && beamIsVertical) continue;
-            if (!mustBeHorizontal && !beamIsVertical) continue;
-            
             const ep = getEndpoints(beams[i]);
             if (!ep.start || !ep.end) continue;
             if (posEqual(pos, ep.start)) return { idx: i, fromStart: true };
@@ -176,32 +146,21 @@ function findContinuousBeamChains(beamsGroup) {
         return null;
     };
     
-    // Build chains - process horizontal beams first, then vertical columns
+    // Build chains
     for (let startIdx = 0; startIdx < beams.length; startIdx++) {
         if (used.has(startIdx)) continue;
         
-        const startBeam = beams[startIdx];
-        const startIsVertical = isVerticalBeam(startBeam);
-        
-        // For vertical columns, treat each as a single-span element (no chaining)
-        if (startIsVertical) {
-            used.add(startIdx);
-            chains.push([{ idx: startIdx, reversed: false }]);
-            continue;
-        }
-        
-        // For horizontal beams, chain together
         const chain = [{ idx: startIdx, reversed: false }];
         used.add(startIdx);
         
-        const ep = getEndpoints(startBeam);
+        const ep = getEndpoints(beams[startIdx]);
         if (!ep.start || !ep.end) continue;
         
-        // Extend chain forward (from end of first beam) - only horizontal beams
+        // Extend chain forward (from end of first beam)
         let currentPos = ep.end;
         let lastIdx = startIdx;
         while (true) {
-            const next = findConnectedBeam(currentPos, lastIdx, true); // mustBeHorizontal = true
+            const next = findConnectedBeam(currentPos, lastIdx);
             if (!next) break;
             
             used.add(next.idx);
@@ -212,11 +171,11 @@ function findContinuousBeamChains(beamsGroup) {
             lastIdx = next.idx;
         }
         
-        // Extend chain backward (from start of first beam) - only horizontal beams
+        // Extend chain backward (from start of first beam)
         currentPos = ep.start;
         lastIdx = startIdx;
         while (true) {
-            const prev = findConnectedBeam(currentPos, lastIdx, true); // mustBeHorizontal = true
+            const prev = findConnectedBeam(currentPos, lastIdx);
             if (!prev) break;
             
             used.add(prev.idx);
@@ -236,18 +195,14 @@ function findContinuousBeamChains(beamsGroup) {
 /**
  * Find support type at a given position by checking nodes
  * Returns 'fixed', 'pinned', or 'free'
- * 
- * IMPORTANT: Default is 'fixed' (fully rigid connection) for frame structures.
- * This ensures beam-beam and beam-column connections are fully continuous
- * unless explicitly set to pinned or free via a support/constraint.
  */
 function getSupportTypeAtPosition(pos, tol = 0.15) {
     if (!window.sceneData) {
-        console.log('No sceneData found, defaulting to fixed');
-        return 'fixed';
+        console.log('No sceneData found');
+        return 'free';
     }
     
-    // Check nodes group first for explicit constraint assignments
+    // Check nodes group first
     if (window.sceneData.nodesGroup) {
         const nodes = window.sceneData.nodesGroup.children;
         console.log('Checking', nodes.length, 'nodes for support at', pos.x.toFixed(2), pos.y.toFixed(2), pos.z.toFixed(2));
@@ -263,11 +218,8 @@ function getSupportTypeAtPosition(pos, tol = 0.15) {
             if (dist < tol) {
                 const supportType = node.userData?.supportType;
                 console.log('Found node at distance', dist.toFixed(3), 'supportType:', supportType);
-                // Only return pinned/free if explicitly set, otherwise treat as fixed
-                if (supportType === 'pinned') return 'pinned';
-                if (supportType === 'free') return 'free';
-                // 'fixed' or undefined/null => return 'fixed'
                 if (supportType === 'fixed') return 'fixed';
+                if (supportType === 'pinned') return 'pinned';
             }
         }
     }
@@ -286,18 +238,15 @@ function getSupportTypeAtPosition(pos, tol = 0.15) {
                 if (dist < tol) {
                     const st = child.userData.supportType;
                     console.log('Found constraint symbol at distance', dist.toFixed(3), 'type:', st);
-                    // Only return pinned/free if explicitly set
-                    if (st === 'pinned') return 'pinned';
-                    if (st === 'free') return 'free';
                     if (st === 'fixed') return 'fixed';
+                    if (st === 'pinned') return 'pinned';
                 }
             }
         }
     }
     
-    // Default to 'fixed' for frame structures - all connections are rigid unless specified otherwise
-    console.log('No explicit support found at position, defaulting to fixed (rigid connection)');
-    return 'fixed';
+    console.log('No support found at position');
+    return 'free';
 }
 
 /**
@@ -327,137 +276,6 @@ export function showBendingMomentDiagram() {
     const diagramGroup = new THREE.Group();
     diagramGroup.name = 'bendingMomentDiagram';
     
-    // Check if we have analysis results with beam forces
-    const hasAnalysisResults = window.analysisResults && 
-                               window.analysisResults.beam_forces && 
-                               window.analysisResults.beam_forces.length > 0;
-    
-    if (hasAnalysisResults) {
-        console.log('Using beam forces from analysis results');
-        // Use actual beam forces from CalculiX analysis
-        showBendingMomentFromResults(diagramGroup, beamsGroup);
-    } else {
-        console.log('No analysis results, calculating from loads');
-        // Fall back to calculating from beam loads
-        showBendingMomentFromLoads(diagramGroup, beamsGroup);
-    }
-    
-    window.sceneData.scene.add(diagramGroup);
-    console.log('Bending moment diagram added to scene');
-    
-    // Initialize hover events
-    initDiagramHover();
-}
-
-/**
- * Show bending moment diagram using actual analysis results
- * Note: CalculiX returns stresses in Pa (N/m²), we convert to kN·m for display
- */
-function showBendingMomentFromResults(diagramGroup, beamsGroup) {
-    const beamForces = window.analysisResults.beam_forces;
-    console.log(`Processing ${beamForces.length} beam force results for ${beamsGroup.children.length} beams`);
-    
-    // Default beam section dimensions (from structure_exporter.js defaults)
-    const beamWidth = 0.2;  // 200mm
-    const beamHeight = 0.3; // 300mm
-    // Section modulus S = bh²/6 for rectangular section (m³)
-    const sectionModulus = beamWidth * beamHeight * beamHeight / 6;
-    
-    // Find global max moment for scaling (in kN·m)
-    // If moment_z is zero, estimate from bending stress: M = σ * S
-    let globalMaxMoment = 0.1;
-    beamForces.forEach(bf => {
-        let moment = Math.abs(bf.moment_z || 0);
-        // If moment_z is zero but we have bending stress, estimate moment
-        if (moment < 0.01 && bf.bending_stress) {
-            // bending_stress is in Pa (N/m²), sectionModulus in m³
-            // Result is N·m, convert to kN·m
-            moment = Math.abs(bf.bending_stress * sectionModulus) / 1000;
-        }
-        globalMaxMoment = Math.max(globalMaxMoment, moment);
-        
-        if (bf.moment_z_end !== undefined) {
-            globalMaxMoment = Math.max(globalMaxMoment, Math.abs(bf.moment_z_end) / 1000);
-        }
-    });
-    
-    // Calculate average beam length for scaling
-    let totalLength = 0;
-    let beamCount = 0;
-    beamsGroup.children.forEach(beam => {
-        const startPos = beam.userData.startNode?.position || beam.userData.startPos;
-        const endPos = beam.userData.endNode?.position || beam.userData.endPos;
-        if (startPos && endPos) {
-            totalLength += startPos.distanceTo(endPos);
-            beamCount++;
-        }
-    });
-    const avgLength = beamCount > 0 ? totalLength / beamCount : 1;
-    
-    // Scale diagram to be clearly visible (target ~30% of beam length at max moment)
-    const diagramScale = (avgLength * 0.3) / Math.max(globalMaxMoment, 0.1);
-    
-    console.log(`Max moment: ${globalMaxMoment.toFixed(2)} kN·m, Avg length: ${avgLength.toFixed(2)}m, Scale: ${diagramScale.toFixed(4)}`);
-    
-    // Draw diagram for each beam with force results
-    beamForces.forEach(bf => {
-        const beamIdx = bf.element_id;
-        const beam = beamsGroup.children[beamIdx];
-        
-        if (!beam) {
-            console.warn(`Beam ${beamIdx} not found in scene (have ${beamsGroup.children.length} beams)`);
-            return;
-        }
-        
-        const startPos = beam.userData.startNode?.position || beam.userData.startPos;
-        const endPos = beam.userData.endNode?.position || beam.userData.endPos;
-        
-        if (!startPos || !endPos) {
-            console.warn(`Beam ${beamIdx} missing position data`);
-            return;
-        }
-        
-        const length = startPos.distanceTo(endPos);
-        
-        // Get moments at start and end (convert to kN·m)
-        // If moment_z is zero, estimate from bending stress: M = σ * S
-        let M_left = (bf.moment_z || 0) / 1000; // Convert N·m to kN·m
-        if (Math.abs(M_left) < 0.001 && bf.bending_stress) {
-            // Estimate moment from stress - stress in Pa, section modulus in m³
-            // Result N·m -> convert to kN·m
-            M_left = (bf.bending_stress * sectionModulus) / 1000;
-            console.log(`Beam ${beamIdx}: Estimated moment from stress: ${M_left.toFixed(2)} kN·m (stress=${(bf.bending_stress/1e6).toFixed(2)} MPa)`);
-        }
-        
-        // For beam elements without explicit end moments, assume the same magnitude
-        const M_right = bf.moment_z_end !== undefined ? (bf.moment_z_end / 1000) : M_left;
-        
-        // Store span data for hover (in kN·m)
-        window.diagramData.momentSpans.push({
-            startPos: startPos.clone(),
-            endPos: endPos.clone(),
-            length: length,
-            udl: 0,
-            M_left,
-            M_right
-        });
-        
-        // Create moment curve
-        const diagram = createContinuousMomentCurve(
-            startPos, endPos, length, 0, M_left, M_right,
-            { showLeftLabel: true, showRightLabel: true, diagramScale }
-        );
-        
-        if (diagram) {
-            diagramGroup.add(diagram);
-        }
-    });
-}
-
-/**
- * Show bending moment diagram by calculating from applied loads (original method)
- */
-function showBendingMomentFromLoads(diagramGroup, beamsGroup) {
     // Find continuous beam chains
     const chains = findContinuousBeamChains(beamsGroup);
     console.log('Found', chains.length, 'beam chain(s)');
@@ -509,15 +327,7 @@ function showBendingMomentFromLoads(diagramGroup, beamsGroup) {
         let supportMoments;
         supportMoments = calculateBeamMomentsWithSupports(spans, leftSupport, rightSupport);
         
-        // Round very small moments to zero for display and numerical consistency
-        supportMoments = supportMoments.map(m => Math.abs(m) < 1e-9 ? 0 : m);
-        
-        console.log('Support moments:', supportMoments.map(m => m.toFixed(4)));
-        
-        // Log spans for debugging symmetry issues
-        console.log('Spans:', spans.map((s, i) => 
-            `[${i}] L=${s.length.toFixed(3)}, w=${s.udl.toFixed(2)}`
-        ).join(', '));
+        console.log('Support moments:', supportMoments.map(m => m.toFixed(2)));
         
         // Calculate global max moment for consistent scaling across all spans in chain
         let globalMaxMoment = 0.1;
@@ -568,6 +378,12 @@ function showBendingMomentFromLoads(diagramGroup, beamsGroup) {
             }
         });
     });
+    
+    window.sceneData.scene.add(diagramGroup);
+    console.log('Bending moment diagram added to scene');
+    
+    // Initialize hover events
+    initDiagramHover();
 }
 
 /**
@@ -743,13 +559,12 @@ function calculateContinuousBeamMomentsWithEnds(spans, leftSupport, rightSupport
 
 /**
  * Solve linear system Ax = b using Gaussian elimination with partial pivoting
- * Includes numerical cleanup to ensure symmetric structures produce symmetric results
  */
 function solveLinearSystem(A, b) {
     const n = b.length;
     if (n === 0) return [];
     
-    // Augmented matrix - use higher precision by avoiding unnecessary operations
+    // Augmented matrix
     const aug = A.map((row, i) => [...row, b[i]]);
     
     // Forward elimination with partial pivoting
@@ -763,7 +578,7 @@ function solveLinearSystem(A, b) {
         }
         [aug[col], aug[maxRow]] = [aug[maxRow], aug[col]];
         
-        if (Math.abs(aug[col][col]) < 1e-12) continue; // Skip if pivot is ~0
+        if (Math.abs(aug[col][col]) < 1e-10) continue; // Skip if pivot is ~0
         
         // Eliminate below
         for (let row = col + 1; row < n; row++) {
@@ -781,16 +596,7 @@ function solveLinearSystem(A, b) {
         for (let j = i + 1; j < n; j++) {
             sum -= aug[i][j] * x[j];
         }
-        x[i] = Math.abs(aug[i][i]) > 1e-12 ? sum / aug[i][i] : 0;
-    }
-    
-    // Clean up very small values that are essentially zero (numerical noise)
-    // This ensures symmetric structures produce exactly symmetric results
-    const tolerance = 1e-9;
-    for (let i = 0; i < n; i++) {
-        if (Math.abs(x[i]) < tolerance) {
-            x[i] = 0;
-        }
+        x[i] = Math.abs(aug[i][i]) > 1e-10 ? sum / aug[i][i] : 0;
     }
     
     return x;
@@ -1050,120 +856,6 @@ export function showShearForceDiagram() {
     const diagramGroup = new THREE.Group();
     diagramGroup.name = 'shearForceDiagram';
     
-    // Check if we have analysis results with beam forces
-    const hasAnalysisResults = window.analysisResults && 
-                               window.analysisResults.beam_forces && 
-                               window.analysisResults.beam_forces.length > 0;
-    
-    if (hasAnalysisResults) {
-        console.log('Using beam forces from analysis results for shear diagram');
-        showShearForceFromResults(diagramGroup, beamsGroup);
-    } else {
-        console.log('No analysis results, calculating shear from loads');
-        showShearForceFromLoads(diagramGroup, beamsGroup);
-    }
-    
-    window.sceneData.scene.add(diagramGroup);
-    console.log('Shear force diagram added to scene');
-}
-
-/**
- * Show shear force diagram using actual analysis results
- * Note: CalculiX returns shear stress in Pa, we estimate force and convert to kN
- */
-function showShearForceFromResults(diagramGroup, beamsGroup) {
-    const beamForces = window.analysisResults.beam_forces;
-    console.log(`Processing ${beamForces.length} beam force results for shear diagram`);
-    
-    // Default beam section dimensions
-    const beamWidth = 0.2;  // 200mm
-    const beamHeight = 0.3; // 300mm
-    // Shear area (approximate) - for rectangular section, effective shear area ≈ 5/6 * A
-    const shearArea = (5/6) * beamWidth * beamHeight;
-    
-    // Find global max shear for scaling (convert stress to force in kN)
-    // shear_y from CalculiX is shear stress (τ) in Pa
-    // Shear force V ≈ τ * A_shear, then convert to kN
-    let globalMaxShear = 0.1;
-    beamForces.forEach(bf => {
-        // Convert shear stress (Pa) to shear force (kN)
-        const shearForce = Math.abs((bf.shear_y || 0) * shearArea) / 1000;
-        globalMaxShear = Math.max(globalMaxShear, shearForce);
-        if (bf.shear_y_end !== undefined) {
-            const shearForceEnd = Math.abs(bf.shear_y_end * shearArea) / 1000;
-            globalMaxShear = Math.max(globalMaxShear, shearForceEnd);
-        }
-    });
-    
-    // Calculate average beam length for scaling
-    let totalLength = 0;
-    let beamCount = 0;
-    beamsGroup.children.forEach(beam => {
-        const startPos = beam.userData.startNode?.position || beam.userData.startPos;
-        const endPos = beam.userData.endNode?.position || beam.userData.endPos;
-        if (startPos && endPos) {
-            totalLength += startPos.distanceTo(endPos);
-            beamCount++;
-        }
-    });
-    const avgLength = beamCount > 0 ? totalLength / beamCount : 1;
-    
-    // Scale diagram to be clearly visible
-    const diagramScale = (avgLength * 0.3) / Math.max(globalMaxShear, 0.1);
-    
-    console.log(`Max shear: ${globalMaxShear.toFixed(2)} kN, Scale: ${diagramScale.toFixed(4)}`);
-    
-    // Draw diagram for each beam with force results
-    beamForces.forEach(bf => {
-        const beamIdx = bf.element_id;
-        const beam = beamsGroup.children[beamIdx];
-        
-        if (!beam) {
-            console.warn(`Beam ${beamIdx} not found for shear diagram`);
-            return;
-        }
-        
-        const startPos = beam.userData.startNode?.position || beam.userData.startPos;
-        const endPos = beam.userData.endNode?.position || beam.userData.endPos;
-        
-        if (!startPos || !endPos) return;
-        
-        const length = startPos.distanceTo(endPos);
-        
-        // Convert shear stress to force in kN
-        const V_left = ((bf.shear_y || 0) * shearArea) / 1000;
-        const V_right = bf.shear_y_end !== undefined 
-            ? (bf.shear_y_end * shearArea) / 1000 
-            : V_left;
-        
-        // Store span data for hover (in kN)
-        window.diagramData.shearSpans.push({
-            startPos: startPos.clone(),
-            endPos: endPos.clone(),
-            length: length,
-            udl: 0,
-            V_left,
-            V_right,
-            M_left: (bf.moment_z || 0) / 1000,
-            M_right: (bf.moment_z_end || 0) / 1000
-        });
-        
-        // Create shear curve with override values in kN
-        const diagram = createContinuousShearCurve(
-            startPos, endPos, length, 0, 0, 0,
-            { diagramScale, overrideV_left: V_left, overrideV_right: V_right }
-        );
-        
-        if (diagram) {
-            diagramGroup.add(diagram);
-        }
-    });
-}
-
-/**
- * Show shear force diagram by calculating from applied loads (original method)
- */
-function showShearForceFromLoads(diagramGroup, beamsGroup) {
     // Find continuous beam chains
     const chains = findContinuousBeamChains(beamsGroup);
     console.log('Drawing shear force diagram for', chains.length, 'chain(s)');
@@ -1204,10 +896,7 @@ function showShearForceFromLoads(diagramGroup, beamsGroup) {
         const rightSupport = getSupportTypeAtPosition(spans[spans.length - 1].endPos);
         
         // Get support moments using actual boundary conditions
-        let supportMoments = calculateBeamMomentsWithSupports(spans, leftSupport, rightSupport);
-        
-        // Round very small moments to zero for numerical consistency
-        supportMoments = supportMoments.map(m => Math.abs(m) < 1e-9 ? 0 : m);
+        const supportMoments = calculateBeamMomentsWithSupports(spans, leftSupport, rightSupport);
         
         // Calculate global max shear for consistent scaling across all spans in chain
         let globalMaxShear = 0.1;
@@ -1258,6 +947,12 @@ function showShearForceFromLoads(diagramGroup, beamsGroup) {
             }
         });
     });
+    
+    window.sceneData.scene.add(diagramGroup);
+    console.log('Shear force diagram added to scene');
+    
+    // Initialize hover events
+    initDiagramHover();
 }
 
 window.showShearForceDiagram = showShearForceDiagram;
@@ -1265,28 +960,21 @@ window.showShearForceDiagram = showShearForceDiagram;
 /**
  * Create shear force diagram for a span of continuous beam
  * Dark green color with transparent shading
- * @param {Object} options - { diagramScale: number, overrideV_left, overrideV_right }
+ * @param {Object} options - { diagramScale: number }
  */
 function createContinuousShearCurve(startPos, endPos, L, w, M_left, M_right, options = {}) {
-    const { diagramScale: passedScale, overrideV_left, overrideV_right } = options;
+    const { diagramScale: passedScale } = options;
     const group = new THREE.Group();
     const upDir = new THREE.Vector3(0, 1, 0);
     
-    // Red color for shear force diagram
-    const shearColor = 0xff002b;
-    const shearColorHex = '#ff002b';
+    // Dark green color for shear
+    const shearColor = 0x006633;
+    const shearColorHex = '#006633';
     
     // Shear at any point: V(x) = (M_right - M_left)/L + w*L/2 - w*x
-    // Or use override values from analysis results if provided
-    let V_left, V_right;
-    if (overrideV_left !== undefined && overrideV_right !== undefined) {
-        V_left = overrideV_left;
-        V_right = overrideV_right;
-    } else {
-        const momentTerm = (M_right - M_left) / L;
-        V_left = momentTerm + w * L / 2;
-        V_right = momentTerm - w * L / 2;
-    }
+    const momentTerm = (M_right - M_left) / L;
+    const V_left = momentTerm + w * L / 2;
+    const V_right = momentTerm - w * L / 2;
     
     console.log(`Span shear: V_left=${V_left.toFixed(2)}, V_right=${V_right.toFixed(2)}`);
     

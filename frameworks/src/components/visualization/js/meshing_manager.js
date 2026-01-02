@@ -1,130 +1,7 @@
-import { selectedPlates, createNode, selectedNodes, createBeam } from './geometry_manager.js';
-import { updateNodeLabels, updateBeamLabels } from './labels_manager.js';
+import { selectedPlates, createNode, selectedNodes } from './geometry_manager.js';
+import { updateNodeLabels } from './labels_manager.js';
 
 const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js');
-
-/**
- * Find beams that lie along a line segment (plate edge)
- * @param {THREE.Group} beamsGroup - Group containing all beams
- * @param {THREE.Vector3} edgeStart - Start of plate edge
- * @param {THREE.Vector3} edgeEnd - End of plate edge
- * @param {number} tolerance - Distance tolerance for matching
- * @returns {Array} Array of beams on this edge with their parametric positions
- */
-function findBeamsOnEdge(beamsGroup, edgeStart, edgeEnd, tolerance = 0.1) {
-    const beamsOnEdge = [];
-    const edgeDir = new THREE.Vector3().subVectors(edgeEnd, edgeStart);
-    const edgeLength = edgeDir.length();
-    edgeDir.normalize();
-    
-    beamsGroup.children.forEach(beam => {
-        const beamStart = beam.userData.startNode?.position;
-        const beamEnd = beam.userData.endNode?.position;
-        
-        if (!beamStart || !beamEnd) return;
-        
-        // Check if beam endpoints are on or near the edge
-        const distStartToEdge = pointToLineDistance(beamStart, edgeStart, edgeEnd);
-        const distEndToEdge = pointToLineDistance(beamEnd, edgeStart, edgeEnd);
-        
-        // Get parametric positions along the edge (0 to 1)
-        const tStart = projectPointOntoLine(beamStart, edgeStart, edgeDir, edgeLength);
-        const tEnd = projectPointOntoLine(beamEnd, edgeStart, edgeDir, edgeLength);
-        
-        // Beam is on edge if both endpoints are close to the edge line and within the edge segment
-        if (distStartToEdge < tolerance && distEndToEdge < tolerance &&
-            tStart >= -0.01 && tStart <= 1.01 && tEnd >= -0.01 && tEnd <= 1.01) {
-            beamsOnEdge.push({
-                beam: beam,
-                tStart: Math.max(0, Math.min(1, Math.min(tStart, tEnd))),
-                tEnd: Math.max(0, Math.min(1, Math.max(tStart, tEnd)))
-            });
-        }
-    });
-    
-    return beamsOnEdge;
-}
-
-/**
- * Calculate distance from point to line segment
- */
-function pointToLineDistance(point, lineStart, lineEnd) {
-    const lineDir = new THREE.Vector3().subVectors(lineEnd, lineStart);
-    const lineLength = lineDir.length();
-    if (lineLength < 0.0001) return point.distanceTo(lineStart);
-    
-    lineDir.normalize();
-    const toPoint = new THREE.Vector3().subVectors(point, lineStart);
-    const t = toPoint.dot(lineDir) / lineLength;
-    
-    if (t < 0) return point.distanceTo(lineStart);
-    if (t > 1) return point.distanceTo(lineEnd);
-    
-    const closestPoint = lineStart.clone().addScaledVector(lineDir, t * lineLength);
-    return point.distanceTo(closestPoint);
-}
-
-/**
- * Project point onto line and return parametric position
- */
-function projectPointOntoLine(point, lineStart, lineDir, lineLength) {
-    const toPoint = new THREE.Vector3().subVectors(point, lineStart);
-    return toPoint.dot(lineDir) / lineLength;
-}
-
-/**
- * Split a beam into multiple segments at given positions
- * @param {THREE.Mesh} beam - Original beam to split
- * @param {Array<THREE.Mesh>} intermediateNodes - Nodes to split at (in order)
- * @param {THREE.Group} beamsGroup - Group to add new beams to
- * @param {THREE.Group} nodesGroup - Group containing nodes
- * @returns {Array<THREE.Mesh>} New beam segments
- */
-function splitBeamAtNodes(beam, intermediateNodes, beamsGroup, nodesGroup) {
-    if (intermediateNodes.length === 0) return [beam];
-    
-    const startNode = beam.userData.startNode;
-    const endNode = beam.userData.endNode;
-    
-    if (!startNode || !endNode) return [beam];
-    
-    // Sort intermediate nodes by distance from start
-    const sortedNodes = [...intermediateNodes].sort((a, b) => {
-        const distA = startNode.position.distanceTo(a.position);
-        const distB = startNode.position.distanceTo(b.position);
-        return distA - distB;
-    });
-    
-    // Create all nodes in order: [startNode, ...sortedNodes, endNode]
-    const allNodes = [startNode, ...sortedNodes, endNode];
-    
-    // Remove original beam
-    beamsGroup.remove(beam);
-    if (beam.geometry) beam.geometry.dispose();
-    if (beam.material) beam.material.dispose();
-    
-    // Create new beam segments
-    const newBeams = [];
-    for (let i = 0; i < allNodes.length - 1; i++) {
-        const segStart = allNodes[i];
-        const segEnd = allNodes[i + 1];
-        
-        // Skip zero-length segments
-        if (segStart.position.distanceTo(segEnd.position) < 0.01) continue;
-        
-        const newBeam = createBeam(beamsGroup, segStart.position, segEnd.position, segStart, segEnd, true);
-        if (newBeam) {
-            // Copy beam section properties
-            newBeam.userData.section = beam.userData.section;
-            newBeam.userData.originalBeamId = beam.userData.id;
-            newBeam.userData.isSubBeam = true;
-            newBeams.push(newBeam);
-        }
-    }
-    
-    console.log(`Split beam into ${newBeams.length} segments`);
-    return newBeams;
-}
 
 /**
  * Generate mesh for selected plates
@@ -144,7 +21,7 @@ export async function generateMesh(type, size, sceneData) {
         return;
     }
 
-    const { nodesGroup, beamsGroup } = sceneData;
+    const { nodesGroup } = sceneData;
     const plateCount = selectedPlates.size;
     console.log(`Processing ${plateCount} plates...`);
 
@@ -185,7 +62,7 @@ export async function generateMesh(type, size, sceneData) {
             plate.material.color.setHex(originalColor);
             
             // Generate and add mesh visualization
-            const result = createMeshVisualization(plate, type, size, Delaunator, nodesGroup, beamsGroup);
+            const result = createMeshVisualization(plate, type, size, Delaunator, nodesGroup);
             
             if (result) {
                 const { meshLines, createdNodeIds } = result;
@@ -211,7 +88,6 @@ export async function generateMesh(type, size, sceneData) {
         console.log('Meshing complete.');
         // Update labels once after all nodes are created (not per-node for performance)
         updateNodeLabels(nodesGroup);
-        if (beamsGroup) updateBeamLabels(beamsGroup);
     }, 200);
 }
 
@@ -222,10 +98,9 @@ export async function generateMesh(type, size, sceneData) {
  * @param {number} size 
  * @param {class} DelaunatorClass - The Delaunator class
  * @param {THREE.Group} nodesGroup
- * @param {THREE.Group} beamsGroup - Optional beams group for beam-plate connectivity
  * @returns {Object}
  */
-function createMeshVisualization(plate, type, size, DelaunatorClass, nodesGroup, beamsGroup = null) {  
+function createMeshVisualization(plate, type, size, DelaunatorClass, nodesGroup) {  
     // 1. Get unique boundary vertices
     const positions = plate.geometry.attributes.position.array;
     const vertices = [];
@@ -274,9 +149,6 @@ function createMeshVisualization(plate, type, size, DelaunatorClass, nodesGroup,
         };
     });
 
-    // Track beams that need to be split and their intermediate nodes
-    const beamsToSplit = new Map(); // beam -> [intermediateNodes]
-
     // Find existing nodes on plate
     const existingNodesOnPlate = [];
     if (nodesGroup) {
@@ -316,65 +188,11 @@ function createMeshVisualization(plate, type, size, DelaunatorClass, nodesGroup,
     const meshElementsGroup = new THREE.Group();
     meshElementsGroup.userData.isMeshViz = true;
     
-    // Find beams along plate edges for beam-plate connectivity
-    const edgeBeamsMap = new Map(); // edgeIndex -> [{beam, tStart, tEnd}]
-    if (beamsGroup && vertices.length >= 3) {
-        console.log('Checking for beams along plate edges...');
-        for (let i = 0; i < vertices.length; i++) {
-            const edgeStart = vertices[i];
-            const edgeEnd = vertices[(i + 1) % vertices.length];
-            const beamsOnEdge = findBeamsOnEdge(beamsGroup, edgeStart, edgeEnd, 0.1);
-            if (beamsOnEdge.length > 0) {
-                edgeBeamsMap.set(i, beamsOnEdge);
-                console.log(`  Edge ${i}: Found ${beamsOnEdge.length} beam(s)`);
-            }
-        }
-    }
-    
-    // Helper to check if a position lies on a beam and track it for splitting
-    const checkAndTrackBeamNode = (pos, node) => {
-        if (!beamsGroup) return;
-        
-        edgeBeamsMap.forEach((beamsOnEdge, edgeIdx) => {
-            beamsOnEdge.forEach(({ beam }) => {
-                const beamStart = beam.userData.startNode?.position;
-                const beamEnd = beam.userData.endNode?.position;
-                if (!beamStart || !beamEnd) return;
-                
-                // Check if node is on this beam (not at endpoints)
-                const distToStart = pos.distanceTo(beamStart);
-                const distToEnd = pos.distanceTo(beamEnd);
-                const beamLength = beamStart.distanceTo(beamEnd);
-                
-                // Skip if at endpoints
-                if (distToStart < 0.05 || distToEnd < 0.05) return;
-                
-                // Check if on the beam line
-                const distToLine = pointToLineDistance(pos, beamStart, beamEnd);
-                if (distToLine < 0.05 && distToStart < beamLength && distToEnd < beamLength) {
-                    // Node is on this beam - track for splitting
-                    if (!beamsToSplit.has(beam)) {
-                        beamsToSplit.set(beam, []);
-                    }
-                    // Check we haven't already added this node
-                    const existingNodes = beamsToSplit.get(beam);
-                    const alreadyAdded = existingNodes.some(n => n.position.distanceTo(pos) < 0.05);
-                    if (!alreadyAdded) {
-                        beamsToSplit.get(beam).push(node);
-                        console.log(`  Tracking node for beam split at (${pos.x.toFixed(2)}, ${pos.y.toFixed(2)}, ${pos.z.toFixed(2)})`);
-                    }
-                }
-            });
-        });
-    };
-    
     // Helper to get or create node at position
-    const getOrCreateNode = (pos, isOnEdge = false) => {
+    const getOrCreateNode = (pos) => {
         // Check existing nodes on plate
         for (const en of existingNodesOnPlate) {
             if (en.node.position.distanceTo(pos) < 0.05) { // Increased tolerance to 5cm
-                // Also check if this existing node should be tracked for beam splitting
-                if (isOnEdge) checkAndTrackBeamNode(pos, en.node);
                 return en.node;
             }
         }
@@ -406,18 +224,6 @@ function createMeshVisualization(plate, type, size, DelaunatorClass, nodesGroup,
         newNode.scale.set(0.5, 0.5, 0.5);
         
         createdNodeIds.push(newNode.uuid);
-        
-        // Add to existingNodesOnPlate for future lookups
-        const diff = new THREE.Vector3().subVectors(pos, v0);
-        existingNodesOnPlate.push({
-            u: diff.dot(uAxis),
-            v: diff.dot(vAxis),
-            node: newNode
-        });
-        
-        // Track for beam splitting if on edge
-        if (isOnEdge) checkAndTrackBeamNode(pos, newNode);
-        
         return newNode;
     };
 
@@ -447,9 +253,7 @@ function createMeshVisualization(plate, type, size, DelaunatorClass, nodesGroup,
                 const p32 = new THREE.Vector3().lerpVectors(vertices[3], vertices[2], u);
                 const pos = new THREE.Vector3().lerpVectors(p01, p32, v);
                 
-                // Determine if this node is on the edge (for beam connectivity)
-                const isOnEdge = (i === 0 || i === nU || j === 0 || j === nV);
-                gridNodes[i][j] = getOrCreateNode(pos, isOnEdge);
+                gridNodes[i][j] = getOrCreateNode(pos);
             }
         }
         
@@ -600,8 +404,7 @@ function createMeshVisualization(plate, type, size, DelaunatorClass, nodesGroup,
         const triangles = delaunay.triangles;
         
         // Create nodes for all points
-        const boundaryCount = boundaryNodes.length;
-        const pointNodes = allNodes.map((p, idx) => {
+        const pointNodes = allNodes.map(p => {
             if (p.existingNode) return p.existingNode;
             
             // Unproject
@@ -612,10 +415,8 @@ function createMeshVisualization(plate, type, size, DelaunatorClass, nodesGroup,
                     .addScaledVector(vAxis, v);
             };
             const pos = unproject(p.u, p.v);
-            
-            // Nodes in boundaryNodes array are on the edge
-            const isOnEdge = idx < boundaryCount;
-            return getOrCreateNode(pos, isOnEdge);
+                
+            return getOrCreateNode(pos);
         });
         
         // Create individual triangle elements
@@ -672,16 +473,6 @@ function createMeshVisualization(plate, type, size, DelaunatorClass, nodesGroup,
                 meshElementsGroup.add(triMesh);
             }
         }
-    }
-    
-    // Split beams that have intermediate mesh nodes along them
-    if (beamsGroup && beamsToSplit.size > 0) {
-        console.log(`Splitting ${beamsToSplit.size} beam(s) to connect with plate mesh...`);
-        beamsToSplit.forEach((intermediateNodes, beam) => {
-            if (intermediateNodes.length > 0) {
-                splitBeamAtNodes(beam, intermediateNodes, beamsGroup, nodesGroup);
-            }
-        });
     }
     
     return { meshLines: meshElementsGroup, createdNodeIds };
