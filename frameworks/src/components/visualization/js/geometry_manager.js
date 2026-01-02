@@ -182,12 +182,6 @@ export function createNode(nodesGroup, position, skipLabelUpdate = false) {
     node.userData.id = getNextId(nodesGroup);
     nodesGroup.add(node);
     console.log(`Node created at (${position.x}, ${position.y}, ${position.z}) with ID ${node.userData.id}`);
-    
-    // Log to console panel
-    if (!skipLabelUpdate && window.addConsoleLine) {
-        window.addConsoleLine('MODEL', `Node ${node.userData.id} created at (${position.x.toFixed(2)}, ${position.y.toFixed(2)}, ${position.z.toFixed(2)})`, 'info');
-    }
-    
     if (!skipLabelUpdate) {
         updateNodeLabels(nodesGroup);
     }
@@ -243,12 +237,6 @@ export function createBeam(beamsGroup, startPos, endPos, startNode = null, endNo
     
     beamsGroup.add(beam);
     console.log(`Beam created between positions with ID ${beam.userData.id}`);
-    
-    // Log to console panel
-    if (!skipLabelUpdate && window.addConsoleLine) {
-        window.addConsoleLine('MODEL', `Beam ${beam.userData.id} created (L=${beamLength.toFixed(2)} m)`, 'info');
-    }
-    
     if (!skipLabelUpdate) {
         updateBeamLabels(beamsGroup);
     }
@@ -347,13 +335,6 @@ export function createPlateMesh(nodes, platesGroup) {
 
     platesGroup.add(plate);
     console.log(`Plate created with ${nodes.length} nodes (vertical=${isVertical}) and ID ${plate.userData.id}`);
-    
-    // Log to console panel
-    if (window.addConsoleLine) {
-        const orientation = isVertical ? 'vertical' : 'horizontal';
-        window.addConsoleLine('MODEL', `Plate ${plate.userData.id} created (${nodes.length} nodes, ${orientation})`, 'info');
-    }
-    
     updatePlateLabels(platesGroup);
     return plate;
 }

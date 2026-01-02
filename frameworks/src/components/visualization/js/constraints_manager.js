@@ -52,12 +52,6 @@ export function applyNodeConstraints(constraintData, sceneData) {
         };
         
         console.log(`Applied constraint type: ${supportType.type} to node`, node.userData.constraint);
-        
-        // Log to console panel
-        if (window.addConsoleLine) {
-            const nodeId = node.userData.id || '?';
-            window.addConsoleLine('CONST', `${supportType.type.toUpperCase()} support applied to Node ${nodeId}`, 'info');
-        }
     });
     
     console.log(`Constraints applied to ${selectedNodes.size} node(s)`);

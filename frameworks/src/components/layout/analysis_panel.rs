@@ -57,27 +57,10 @@ pub fn AnalysisPanel(
                 // Pass beam section to extractor
                 window.currentBeamSection = beamSection;
                 
-                // Log analysis start to console
-                if (window.logAnalysisStart) {{
-                    window.logAnalysisStart('Static Linear');
-                }}
-                if (window.logAnalysisProgress) {{
-                    window.logAnalysisProgress('1/5', 'Extracting model geometry...');
-                }}
-                
                 const structureData = window.extractStructureData(material, defaultThickness);
                 
                 if (!structureData) {{
-                    if (window.logError) window.logError('Failed to extract structure data from scene');
                     return {{ error: 'Failed to extract structure data from scene' }};
-                }}
-                
-                if (window.logAnalysisProgress) {{
-                    const nodeCount = structureData.nodes?.length || 0;
-                    const beamCount = structureData.beams?.length || 0;
-                    const plateCount = structureData.plates?.length || 0;
-                    window.logAnalysisProgress('2/5', `Model extracted: ${{nodeCount}} nodes, ${{beamCount}} beams, ${{plateCount}} plates`);
-                    window.logAnalysisProgress('3/5', 'Sending to CalculiX solver...');
                 }}
                 
                 try {{
@@ -89,32 +72,19 @@ pub fn AnalysisPanel(
                         body: JSON.stringify({{ model: structureData }})
                     }});
                     
-                    if (window.logAnalysisProgress) {{
-                        window.logAnalysisProgress('4/5', 'Processing solver response...');
-                    }}
-                    
                     if (!response.ok) {{
-                        if (window.logError) window.logError(`HTTP error! status: ${{response.status}}`);
                         return {{ error: `HTTP error! status: ${{response.status}}` }};
                     }}
                     
                     const data = await response.json();
                     
                     if (data.status === 'Success' && data.results) {{
-                        if (window.logAnalysisProgress) {{
-                            window.logAnalysisProgress('5/5', 'Updating visualization...');
-                        }}
                         window.updateAnalysisResults(data.results);
-                        if (window.logAnalysisResults) {{
-                            window.logAnalysisResults(data.results);
-                        }}
                         return {{ success: true, results: data.results }};
                     }} else {{
-                        if (window.logError) window.logError(data.error_message || 'Analysis failed');
                         return {{ error: data.error_message || 'Analysis failed' }};
                     }}
                 }} catch (error) {{
-                    if (window.logError) window.logError(error.toString());
                     return {{ error: error.toString() }};
                 }}
                 "#)

@@ -124,30 +124,16 @@ export function extractStructureData(materialConfig, defaultThickness) {
             const endId = nodeMap.get(endNode.uuid);
             
             if (startId !== undefined && endId !== undefined) {
-                // Create midpoint node for B32 (3-node quadratic beam) element
-                const midX = (nodes[startId].x + nodes[endId].x) / 2;
-                const midY = (nodes[startId].y + nodes[endId].y) / 2;
-                const midZ = (nodes[startId].z + nodes[endId].z) / 2;
-                
-                const midNodeId = nodes.length;
-                nodes.push({
-                    id: midNodeId,
-                    x: midX,
-                    y: midY,
-                    z: midZ
-                });
-                
-                // B32 node order: start, end, midpoint
                 beams.push({
                     id: index,
-                    node_ids: [startId, endId, midNodeId],
+                    node_ids: [startId, endId],
                     section: {
                         width: 0.2,  // Default 200mm width
                         height: 0.3, // Default 300mm height
                         section_type: "Rectangular"
                     }
                 });
-                console.log(`Beam ${index}: Added B32 with nodes ${startId} -> ${endId} (mid: ${midNodeId})`);
+                console.log(`Beam ${index}: Added with nodes ${startId} -> ${endId}`);
             } else {
                 console.warn(`Beam ${index}: Node IDs not found in map`);
             }

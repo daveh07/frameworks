@@ -12,11 +12,11 @@ pub struct BeamProperties {
 impl Default for BeamProperties {
     fn default() -> Self {
         Self {
-            section_type: "IBeam".to_string(),
-            width: 0.146,
-            height: 0.252,
-            flange_thickness: 0.0086,
-            web_thickness: 0.0061,
+            section_type: "Rectangular".to_string(),
+            width: 0.3,
+            height: 0.5,
+            flange_thickness: 0.015,
+            web_thickness: 0.010,
         }
     }
 }

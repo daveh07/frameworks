@@ -138,14 +138,8 @@ export async function generateMesh(type, size, sceneData) {
 
     console.log(`Generating ${type} mesh with element size ${size}...`);
     
-    // Log to console panel
-    if (window.addConsoleLine) {
-        window.addConsoleLine('MESH', `Generating ${type} mesh (size=${size}m)...`, 'info');
-    }
-    
     if (selectedPlates.size === 0) {
         console.warn('No plates selected for meshing');
-        if (window.logWarning) window.logWarning('No plates selected for meshing');
         alert('Please select at least one plate to mesh.');
         return;
     }
@@ -218,13 +212,6 @@ export async function generateMesh(type, size, sceneData) {
         // Update labels once after all nodes are created (not per-node for performance)
         updateNodeLabels(nodesGroup);
         if (beamsGroup) updateBeamLabels(beamsGroup);
-        
-        // Log completion to console panel
-        if (window.addConsoleLine) {
-            const totalNodes = nodesGroup.children.length;
-            const totalBeams = beamsGroup ? beamsGroup.children.length : 0;
-            window.addConsoleLine('MESH', `Meshing complete: ${totalNodes} nodes, ${totalBeams} beams`, 'success');
-        }
     }, 200);
 }
 
