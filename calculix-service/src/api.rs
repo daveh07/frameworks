@@ -11,7 +11,7 @@ use tokio::sync::Mutex;
 use tower_http::cors::{CorsLayer, Any};
 use uuid::Uuid;
 
-use crate::executor::{CalculiXExecutor, ExecutorError};
+use crate::executor::CalculiXExecutor;
 use crate::generator::CalculiXGenerator;
 use crate::models::{AnalysisRequest, AnalysisResponse, AnalysisStatus, StructuralModel};
 
@@ -66,8 +66,7 @@ async fn root_handler() -> Json<serde_json::Value> {
 /// Health check endpoint
 async fn health_check() -> Json<serde_json::Value> {
     // Check if CalculiX is available
-    let ccx_path = std::env::var("CALCULIX_PATH")
-        .unwrap_or_else(|_| "ccx".to_string());
+    let ccx_path = crate::executor::resolve_ccx_path();
     
     let ccx_available = std::process::Command::new(&ccx_path)
         .arg("-v") // ccx -v usually prints version

@@ -19,8 +19,7 @@ async fn main() {
     tracing::info!("Starting CalculiX FEA Service");
 
     // Check if CalculiX is available
-    let ccx_path = std::env::var("CALCULIX_PATH")
-        .unwrap_or_else(|_| "ccx".to_string());
+    let ccx_path = crate::executor::resolve_ccx_path();
     tracing::info!("Using CalculiX command: {}", ccx_path);
 
     // Verify CalculiX installation

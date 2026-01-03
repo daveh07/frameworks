@@ -1,10 +1,46 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use tempfile::TempDir;
+use tokio::process::Command;
 use uuid::Uuid;
 
 use crate::models::{AnalysisResults, StructuralModel, NodeDisplacement, NodeReaction, ElementStress, BeamForces};
+
+pub(crate) fn resolve_ccx_path() -> String {
+    if let Ok(val) = std::env::var("CALCULIX_PATH") {
+        let trimmed = val.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+
+    // Common layout in this repo: calculix-service/bin/ccx
+    let candidates = [
+        PathBuf::from("./bin/ccx"),
+        PathBuf::from("bin/ccx"),
+    ];
+
+    for candidate in candidates {
+        if candidate.is_file() {
+            return candidate.to_string_lossy().to_string();
+        }
+    }
+
+    // If running the compiled binary from target/{debug,release}, walk up looking for bin/ccx
+    if let Ok(exe) = std::env::current_exe() {
+        let mut dir_opt = exe.parent();
+        while let Some(dir) = dir_opt {
+            let candidate = dir.join("bin").join("ccx");
+            if candidate.is_file() {
+                return candidate.to_string_lossy().to_string();
+            }
+            dir_opt = dir.parent();
+        }
+    }
+
+    // Fall back to PATH
+    "ccx".to_string()
+}
 
 pub struct CalculiXExecutor {
     work_dir: PathBuf,
@@ -39,7 +75,7 @@ impl CalculiXExecutor {
         // Run CalculiX (ccx)
         // Note: ccx expects the job name WITHOUT extension
         let job_name = "analysis";
-        let ccx_path = std::env::var("CALCULIX_PATH").unwrap_or_else(|_| "ccx".to_string());
+        let ccx_path = resolve_ccx_path();
 
         tracing::info!("Running command: {} {}", ccx_path, job_name);
 
@@ -47,6 +83,7 @@ impl CalculiXExecutor {
             .arg(job_name)
             .current_dir(work_path)
             .output()
+            .await
             .map_err(|e| ExecutorError::ExecutionError(format!("Failed to execute ccx: {}", e)))?;
 
         if !output.status.success() {
