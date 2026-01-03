@@ -1,0 +1,6 @@
+ ELEMENT            1 with label "B32    R" and with nodes:
+          1          3          2
+  is expanded into a "C3D20 BR" element with topology:
+          4         12         13          5          7         15         14          6         20         16
+         21          8         23         18         22         10         11         19         17          9
+

@@ -1,0 +1,64 @@
+*HEADING
+Fixed-Fixed Beam (for comparison)
+** Beam from x=0 to x=10m, 4 elements
+** UDL = -10 kN/m
+** Fixed moments at ends: M = wL²/12 = 10000*10²/12 = 83.3 kNm
+** Max moment at midspan: M = wL²/24 = 41.7 kNm
+**
+*NODE, NSET=NALL
+1, 0.0, 0.0, 0.0
+2, 2.5, 0.0, 0.0
+3, 5.0, 0.0, 0.0
+4, 7.5, 0.0, 0.0
+5, 10.0, 0.0, 0.0
+6, 1.25, 0.0, 0.0
+7, 3.75, 0.0, 0.0
+8, 6.25, 0.0, 0.0
+9, 8.75, 0.0, 0.0
+**
+** B32 elements: nodes are end1, end2, midpoint
+*ELEMENT, TYPE=B32, ELSET=EBEAMS
+1, 1, 2, 6
+2, 2, 3, 7
+3, 3, 4, 8
+4, 4, 5, 9
+**
+*MATERIAL, NAME=STEEL
+*ELASTIC
+210e9, 0.3
+*DENSITY
+7850.0
+**
+** Rectangular section 300mm high x 200mm wide
+*BEAM SECTION, ELSET=EBEAMS, MATERIAL=STEEL, SECTION=RECT
+0.3, 0.2
+0.0, 1.0, 0.0
+**
+** FIXED SUPPORTS - Fix ALL DOFs (1-6)
+*BOUNDARY
+1, 1, 6, 0.0
+5, 1, 6, 0.0
+**
+*STEP
+*STATIC
+**
+** UDL -10 kN/m = -10000 N/m in Y direction
+** P1 = load in local Y direction
+*DLOAD
+1, P1, -10000.0
+2, P1, -10000.0
+3, P1, -10000.0
+4, P1, -10000.0
+**
+** Output requests
+*NODE FILE
+U
+*EL FILE, SECTION FORCES, OUTPUT=2D
+S
+**
+*NODE PRINT, NSET=NALL
+U, RF
+*EL PRINT, ELSET=EBEAMS
+S
+**
+*END STEP
