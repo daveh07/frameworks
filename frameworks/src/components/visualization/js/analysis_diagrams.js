@@ -967,9 +967,9 @@ function createContinuousShearCurve(startPos, endPos, L, w, M_left, M_right, opt
     const group = new THREE.Group();
     const upDir = new THREE.Vector3(0, 1, 0);
     
-    // Dark green color for shear
-    const shearColor = 0x006633;
-    const shearColorHex = '#006633';
+    // Red color for shear
+    const shearColor = 0xb80015;
+    const shearColorHex = '#b80015';
     
     // Shear at any point: V(x) = (M_right - M_left)/L + w*L/2 - w*x
     const momentTerm = (M_right - M_left) / L;
