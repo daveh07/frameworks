@@ -1,4 +1,4 @@
-# Frameworkz - Structural Analysis Platform
+# Frameworks - Structural Analysis Platform
 
 A modern web-based structural engineering application featuring real-time 3D visualization and finite element analysis powered by CalculiX.
 
