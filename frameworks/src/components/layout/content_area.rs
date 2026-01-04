@@ -45,9 +45,7 @@ pub fn ContentArea() -> Element {
                     div { class: "canvas-wrapper",
                         crate::components::visualization::ThreeJsCanvas  {}
                     }
-                    div { class: "canvas-wrapper",
-                        crate::components::layout::Console {}
-                    }
+                    crate::components::layout::Console {}
                     crate::components::layout::RightPanel {
                         show_extrude: show_extrude_panel
                     }

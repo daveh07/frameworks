@@ -57,10 +57,23 @@ pub fn AnalysisPanel(
                 // Pass beam section to extractor
                 window.currentBeamSection = beamSection;
                 
+                // Log to console
+                if (window.addSolverLog) {{
+                    window.addSolverLog('Starting CalculiX analysis...', 'info');
+                }}
+                
                 const structureData = window.extractStructureData(material, defaultThickness);
                 
                 if (!structureData) {{
+                    if (window.addSolverLog) window.addSolverLog('Failed to extract structure data', 'error');
                     return {{ error: 'Failed to extract structure data from scene' }};
+                }}
+                
+                if (window.addSolverLog) {{
+                    const beamCount = structureData.beams ? structureData.beams.length : 0;
+                    const shellCount = structureData.shells ? structureData.shells.length : 0;
+                    window.addSolverLog(`Extracted: ${{structureData.nodes.length}} nodes, ${{beamCount}} beams, ${{shellCount}} shells`, 'info');
+                    window.addSolverLog('Sending to CalculiX service...', 'info');
                 }}
                 
                 try {{
@@ -73,18 +86,24 @@ pub fn AnalysisPanel(
                     }});
                     
                     if (!response.ok) {{
+                        if (window.addSolverLog) window.addSolverLog(`HTTP error: ${{response.status}}`, 'error');
                         return {{ error: `HTTP error! status: ${{response.status}}` }};
                     }}
                     
                     const data = await response.json();
                     
                     if (data.status === 'Success' && data.results) {{
+                        if (window.addSolverLog) {{
+                            window.addSolverLog('Analysis completed successfully!', 'success');
+                        }}
                         window.updateAnalysisResults(data.results);
                         return {{ success: true, results: data.results }};
                     }} else {{
+                        if (window.addSolverLog) window.addSolverLog(data.error_message || 'Analysis failed', 'error');
                         return {{ error: data.error_message || 'Analysis failed' }};
                     }}
                 }} catch (error) {{
+                    if (window.addSolverLog) window.addSolverLog(`Error: ${{error.toString()}}`, 'error');
                     return {{ error: error.toString() }};
                 }}
                 "#)
