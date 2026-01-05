@@ -1,7 +1,7 @@
 use wasm_bindgen::prelude::*;
 use web_sys::HtmlCanvasElement;
 
-#[wasm_bindgen(module = "src/components/visualization/js/three_canvas.js")]
+#[wasm_bindgen(module = "/public/js/three_canvas.js")]
 extern "C" {
     #[wasm_bindgen(catch)]
     pub async fn init_three_canvas(canvas: HtmlCanvasElement) -> Result<JsValue, JsValue>;

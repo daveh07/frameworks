@@ -1,0 +1,67 @@
+{
+  "model": {
+    "nodes": [
+      { "name": "N1", "x": 0.0, "y": 0.0, "z": 0.0 },
+      { "name": "N2", "x": 0.0, "y": 4.0, "z": 0.0 },
+      { "name": "N3", "x": 6.0, "y": 4.0, "z": 0.0 },
+      { "name": "N4", "x": 6.0, "y": 0.0, "z": 0.0 }
+    ],
+    "materials": [
+      {
+        "name": "Steel",
+        "e": 200000000000,
+        "g": 76923076923,
+        "nu": 0.3,
+        "rho": 7850.0
+      }
+    ],
+    "sections": [
+      {
+        "name": "W14x30",
+        "a": 0.0057,
+        "iy": 1.42e-5,
+        "iz": 2.91e-4,
+        "j": 7.4e-7
+      }
+    ],
+    "members": [
+      {
+        "name": "Column1",
+        "i_node": "N1",
+        "j_node": "N2",
+        "material": "Steel",
+        "section": "W14x30"
+      },
+      {
+        "name": "Column2",
+        "i_node": "N4",
+        "j_node": "N3",
+        "material": "Steel",
+        "section": "W14x30"
+      },
+      {
+        "name": "Beam",
+        "i_node": "N2",
+        "j_node": "N3",
+        "material": "Steel",
+        "section": "W14x30"
+      }
+    ],
+    "supports": [
+      { "node": "N1", "dx": true, "dy": true, "dz": true, "rx": true, "ry": true, "rz": true },
+      { "node": "N4", "dx": true, "dy": true, "dz": true, "rx": true, "ry": true, "rz": true }
+    ],
+    "node_loads": [
+      { "node": "N2", "fx": 10000.0, "fy": 0.0, "fz": 0.0, "case": "Lateral" }
+    ],
+    "load_combos": [
+      {
+        "name": "1.0L",
+        "factors": { "Lateral": 1.0 }
+      }
+    ]
+  },
+  "options": {
+    "analysis_type": "linear"
+  }
+}

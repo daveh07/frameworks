@@ -12,6 +12,9 @@ use pages::{Dashboard};
 #[derive(Debug, Clone, Routable, PartialEq)]
 #[rustfmt::skip]
 enum Route {
+    #[route("/")]
+    Home {},
+
     #[route("/dashboard")]
     Dashboard {},
 }
@@ -33,6 +36,31 @@ fn App() -> Element {
         script { {VIEWPORT_SCRIPTS} }
 
         Router::<Route> {}
+    }
+}
+
+#[component]
+fn Home() -> Element {
+    let navigator = use_navigator();
+
+    rsx! {
+        div {
+            class: "content-area",
+            div {
+                class: "content-header",
+                h2 { "Home" }
+            }
+            div {
+                class: "right-panel-content",
+                button {
+                    class: "btn-primary",
+                    onclick: move |_| {
+                        navigator.push(Route::Dashboard {});
+                    },
+                    "Go to Dashboard"
+                }
+            }
+        }
     }
 }
 

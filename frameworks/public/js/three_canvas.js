@@ -6,7 +6,7 @@
 const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js');
 
 // Import modules
-import { initializeScene, initializeCameraControls, setViewportView } from './scene_setup.js';
+import { initializeScene, initializeCameraControls, setViewportView } from '/js/scene_setup.js';
 import { 
     selectAll, 
     clearSelection, 
@@ -21,7 +21,7 @@ import {
     createNode,
     createBeam,
     createPlateMesh
-} from './geometry_manager.js';
+} from '/js/geometry_manager.js';
 import {
     modes,
     toggleAddNodeMode as _toggleAddNodeMode,
@@ -49,25 +49,25 @@ import {
     showCopyContextMenu,
     selectionFilter,
     setSelectionFilter
-} from './interaction_handlers.js';
+} from '/js/interaction_handlers.js';
 import {
     applyNodeConstraints,
     clearNodeConstraints
-} from './constraints_manager.js';
+} from '/js/constraints_manager.js';
 import {
     addPointLoad,
     addDistributedLoad,
     addPressureLoad,
     clearLoadsFromBeams,
     clearLoadsFromPlates
-} from './loads_manager.js';
+} from '/js/loads_manager.js';
 import {
     extractStructureData,
     getStructureJSON
-} from './structure_exporter.js';
+} from '/js/structure_exporter.js';
 import {
     generateMesh
-} from './meshing_manager.js';
+} from '/js/meshing_manager.js';
 import {
     initLabels,
     toggleNodeLabels,
@@ -78,7 +78,7 @@ import {
     updateBeamLabels,
     updatePlateLabels,
     updateMeshElementLabels
-} from './labels_manager.js';
+} from '/js/labels_manager.js';
 import {
     showBendingMomentDiagram,
     showShearForceDiagram,
@@ -87,7 +87,7 @@ import {
     colorBeamsByStress,
     resetBeamColors,
     showBeamForcesSummary
-} from './analysis_diagrams.js';
+} from '/js/analysis_diagrams.js';
 
 // Import FEA solver integration (attaches functions to window)
 import '/js/fea_integration.js';
