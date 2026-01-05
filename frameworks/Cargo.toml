@@ -3,6 +3,7 @@ name = "plane-s"
 version = "0.1.0"
 authors = ["daveh07 <david.hill87@outlook.com>"]
 edition = "2021"
+build = "build.rs"
 
 [lib]
 name = "plane_s"

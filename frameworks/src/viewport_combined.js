@@ -44,6 +44,12 @@
 })();
 
 window.initDrawingCanvas = function(canvasId) {
+    if (typeof THREE === 'undefined' || !window.THREE) {
+        // Dioxus injects scripts dynamically; external script loading is async.
+        // If this gets called before Three.js arrives, delay and retry.
+        setTimeout(() => window.initDrawingCanvas(canvasId), 50);
+        return;
+    }
     const container = document.getElementById(canvasId);
     if (!container) {
         console.error(`Canvas element with id "${canvasId}" not found`);

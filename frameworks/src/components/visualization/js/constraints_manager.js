@@ -4,7 +4,17 @@
  */
 
 // Import THREE
-const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js');
+// Use Three.js from global (loaded via script tag).
+// IMPORTANT: this module may be evaluated before the script finishes loading.
+const THREE = new Proxy({}, {
+    get(_target, prop) {
+        const three = window.THREE;
+        if (!three) {
+            throw new Error('Three.js not loaded: window.THREE is undefined');
+        }
+        return three[prop];
+    }
+});
 
 // Import selectedNodes from geometry_manager
 import { selectedNodes } from './geometry_manager.js';
@@ -30,22 +40,27 @@ export function applyNodeConstraints(constraintData, sceneData) {
     }
     
     // Determine support type
-    const supportType = determineSupportType(constraintData);
+    const supportTypeInfo = determineSupportType(constraintData);
     
-    console.log(`Applying ${supportType} constraint to ${selectedNodes.size} node(s)`, constraintData);
+    console.log(`Applying ${supportTypeInfo.type} constraint to ${selectedNodes.size} node(s)`, constraintData);
     
     selectedNodes.forEach(node => {
         console.log('Processing node:', node);
         // Remove existing constraint symbol if any
         removeConstraintSymbol(node, sceneData);
-        
-        // Create new constraint symbol
-        createConstraintSymbol(node, supportType, constraintData, sceneData);
-        
+
+        // Store support type on the node for analysis/diagrams
+        node.userData.supportType = supportTypeInfo.type;
+
+        // Create visual symbol for everything except explicit free
+        if (supportTypeInfo.type !== 'free') {
+            createConstraintSymbol(node, supportTypeInfo, constraintData, sceneData);
+        }
+
         // Store constraint data on the node
         node.userData.constraint = {
             ...constraintData,
-            type: supportType
+            type: supportTypeInfo.type
         };
     });
     
@@ -65,6 +80,7 @@ export function clearNodeConstraints(sceneData) {
     selectedNodes.forEach(node => {
         removeConstraintSymbol(node, sceneData);
         delete node.userData.constraint;
+        delete node.userData.supportType;
     });
     
     console.log(`Constraints cleared from ${selectedNodes.size} node(s)`);
@@ -87,6 +103,11 @@ function determineSupportType(constraintData) {
     const hasSpring = springDirections.length > 0;
     if (hasSpring) {
         return { type: 'spring', freeDOF: '', springDOF: springDirections.join('') };
+    }
+
+    // Explicitly free (no restraints and no springs)
+    if (!dx && !dy && !dz && !rx && !ry && !rz) {
+        return { type: 'free', freeDOF: 'xyz', springDOF: '' };
     }
     
     // Check if all DOF are restrained
@@ -183,7 +204,7 @@ function createConstraintSymbol(node, supportTypeInfo, constraintData, sceneData
  * @param {THREE.Mesh} node - Node mesh
  * @param {Object} sceneData - Scene data
  */
-function removeConstraintSymbol(node, sceneData) {
+export function removeConstraintSymbol(node, sceneData) {
     const existingSymbol = constraintSymbols.get(node.uuid);
     if (existingSymbol) {
         sceneData.scene.remove(existingSymbol);
@@ -215,8 +236,8 @@ function createFixedSymbol() {
     // Clear canvas
     ctx.clearRect(0, 0, size, size);
     
-    // Draw horizontal ground line
-    ctx.strokeStyle = '#000000';
+    // Draw horizontal ground line (use light color so it is visible on dark backgrounds)
+    ctx.strokeStyle = '#ffffff';
     ctx.lineWidth = 8; // Thicker line
     ctx.beginPath();
     ctx.moveTo(size * 0.2, size * 0.4);
@@ -241,7 +262,8 @@ function createFixedSymbol() {
         map: texture,
         transparent: true,
         alphaTest: 0.5,
-        depthTest: true
+        // Always visible (don't let the node sphere occlude it).
+        depthTest: false
     });
     const sprite = new THREE.Sprite(spriteMaterial);
     sprite.scale.set(0.6, 0.6, 1);

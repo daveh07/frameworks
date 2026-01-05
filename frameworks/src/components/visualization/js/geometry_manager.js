@@ -3,7 +3,17 @@
  * Handles node and beam creation, selection, and deletion
  */
 
-const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js');
+// Use Three.js from global (loaded via script tag).
+// IMPORTANT: this module may be evaluated before the script finishes loading.
+const THREE = new Proxy({}, {
+    get(_target, prop) {
+        const three = window.THREE;
+        if (!three) {
+            throw new Error('Three.js not loaded: window.THREE is undefined');
+        }
+        return three[prop];
+    }
+});
 import { addNodeSelectionHighlight, removeNodeSelectionHighlight, clearSelectionHighlights } from './scene_setup.js';
 import { removeConstraintSymbol } from './constraints_manager.js';
 import { updateNodeLabels, updateBeamLabels, updatePlateLabels } from './labels_manager.js';
@@ -225,10 +235,24 @@ export function createBeam(beamsGroup, startPos, endPos, startNode = null, endNo
     const midpoint = new THREE.Vector3().addVectors(startPos, endPos).multiplyScalar(0.5);
     beam.position.copy(midpoint);
     
-    // Orient beam to point from start to end
-    const up = new THREE.Vector3(0, 1, 0);
-    const quaternion = new THREE.Quaternion().setFromUnitVectors(up, direction.normalize());
-    beam.applyQuaternion(quaternion);
+    // Orient beam: CylinderGeometry has its axis along local +Y.
+    // Use a stable basis so "roll" is deterministic for downstream logic.
+    const yAxis = direction.clone().normalize();
+    let preferredUp = new THREE.Vector3(0, 1, 0);
+    let zAxis = preferredUp.clone().sub(yAxis.clone().multiplyScalar(preferredUp.dot(yAxis)));
+    if (zAxis.lengthSq() < 1e-6) {
+        preferredUp = new THREE.Vector3(0, 0, 1);
+        zAxis = preferredUp.clone().sub(yAxis.clone().multiplyScalar(preferredUp.dot(yAxis)));
+        if (zAxis.lengthSq() < 1e-6) {
+            preferredUp = new THREE.Vector3(1, 0, 0);
+            zAxis = preferredUp.clone().sub(yAxis.clone().multiplyScalar(preferredUp.dot(yAxis)));
+        }
+    }
+    zAxis.normalize();
+    const xAxis = new THREE.Vector3().crossVectors(yAxis, zAxis).normalize();
+    zAxis = new THREE.Vector3().crossVectors(xAxis, yAxis).normalize();
+    const basis = new THREE.Matrix4().makeBasis(xAxis, yAxis, zAxis);
+    beam.quaternion.setFromRotationMatrix(basis);
     
     // Store node references in userData for analysis export
     beam.userData.startNode = startNode;
@@ -442,6 +466,17 @@ export function deleteSelected(nodesGroup, beamsGroup, platesGroup) {
         return;
     }
 
+    const deleted = {
+        nodes: [],
+        beams: [],
+        plates: [],
+        elements: []
+    };
+
+    // Nodes that may become orphaned as a result of this delete operation.
+    // We only auto-delete nodes from this set (plus mesh-generated nodes).
+    const orphanCandidates = new Set();
+
     let deletedNodes = 0;
     let deletedBeams = 0;
     let deletedPlates = 0;
@@ -449,6 +484,13 @@ export function deleteSelected(nodesGroup, beamsGroup, platesGroup) {
     // Delete selected elements (mesh faces)
     if (selectedElements.size > 0) {
         selectedElements.forEach(element => {
+            deleted.elements.push(element.uuid);
+
+            // Element loads and orphan cleanup need to consider element nodes
+            if (element?.userData?.nodes) {
+                element.userData.nodes.forEach(n => n && orphanCandidates.add(n.uuid));
+            }
+
             // Find parent group (meshElementsGroup)
             const parent = element.parent;
             if (parent) {
@@ -461,8 +503,8 @@ export function deleteSelected(nodesGroup, beamsGroup, platesGroup) {
                     if (child.material) child.material.dispose();
                 });
             }
-            element.geometry.dispose();
-            element.material.dispose();
+            if (element.geometry) element.geometry.dispose();
+            if (element.material) element.material.dispose();
             deletedPlates++; // Count as plates for now
         });
         selectedElements.clear();
@@ -471,9 +513,18 @@ export function deleteSelected(nodesGroup, beamsGroup, platesGroup) {
     // Delete selected plates
     if (platesGroup) {
         selectedPlates.forEach(plate => {
+            deleted.plates.push(plate.uuid);
+
+            // Plate vertices are candidates for orphan cleanup
+            if (plate?.userData?.nodes) {
+                plate.userData.nodes.forEach(n => n && orphanCandidates.add(n.uuid));
+            }
+
             platesGroup.remove(plate);
-            plate.geometry.dispose();
-            plate.material.dispose();
+            plate.traverse(child => {
+                if (child.geometry) child.geometry.dispose();
+                if (child.material) child.material.dispose();
+            });
             deletedPlates++;
         });
         selectedPlates.clear();
@@ -481,18 +532,82 @@ export function deleteSelected(nodesGroup, beamsGroup, platesGroup) {
     
     // Delete selected beams
     selectedBeams.forEach(beam => {
+        deleted.beams.push(beam.uuid);
+
+        // Beam endpoints are candidates for orphan cleanup
+        if (beam?.userData?.startNode) orphanCandidates.add(beam.userData.startNode.uuid);
+        if (beam?.userData?.endNode) orphanCandidates.add(beam.userData.endNode.uuid);
+        if (Array.isArray(beam?.userData?.nodes)) {
+            beam.userData.nodes.forEach(n => n && orphanCandidates.add(n.uuid));
+        }
+
         beamsGroup.remove(beam);
-        beam.geometry.dispose();
-        beam.material.dispose();
+        if (beam.geometry) beam.geometry.dispose();
+        if (beam.material) beam.material.dispose();
         deletedBeams++;
     });
     selectedBeams.clear();
+
+    const findPlatesConnectedToNode = (node, platesGroup) => {
+        if (!platesGroup) return [];
+        const nodePos = node.position;
+        const tol = 0.01;
+        const connected = [];
+
+        platesGroup.children.forEach(plate => {
+            // Prefer explicit references if present
+            if (plate.userData && Array.isArray(plate.userData.nodes)) {
+                if (plate.userData.nodes.some(n => n && n.uuid === node.uuid)) {
+                    connected.push(plate);
+                    return;
+                }
+            }
+
+            // Fall back to vertex proximity
+            const attr = plate.geometry?.attributes?.position;
+            const arr = attr?.array;
+            if (!arr) return;
+            for (let i = 0; i < arr.length; i += 3) {
+                const dx = arr[i] - nodePos.x;
+                const dy = arr[i + 1] - nodePos.y;
+                const dz = arr[i + 2] - nodePos.z;
+                if ((dx * dx + dy * dy + dz * dz) <= tol * tol) {
+                    connected.push(plate);
+                    return;
+                }
+            }
+        });
+
+        return connected;
+    };
     
     // Delete selected nodes and connected beams
     selectedNodes.forEach(node => {
+        deleted.nodes.push(node.uuid);
+        orphanCandidates.add(node.uuid);
         const nodePos = node.position;
         if (selectionHighlightsGroup) {
             removeNodeSelectionHighlight(selectionHighlightsGroup, node);
+        }
+
+        // If the node belongs to any plates, delete those plates too.
+        if (platesGroup) {
+            const platesToRemove = findPlatesConnectedToNode(node, platesGroup);
+            platesToRemove.forEach(plate => {
+                deleted.plates.push(plate.uuid);
+
+                if (plate?.userData?.nodes) {
+                    plate.userData.nodes.forEach(n => n && orphanCandidates.add(n.uuid));
+                }
+
+                platesGroup.remove(plate);
+                plate.traverse(child => {
+                    if (child.geometry) child.geometry.dispose();
+                    if (child.material) child.material.dispose();
+                });
+                selectedPlates.delete(plate);
+                deletedPlates++;
+            });
         }
         
         // Find and remove beams connected to this node
@@ -515,9 +630,17 @@ export function deleteSelected(nodesGroup, beamsGroup, platesGroup) {
         });
         
         beamsToRemove.forEach(beam => {
+            deleted.beams.push(beam.uuid);
+
+            if (beam?.userData?.startNode) orphanCandidates.add(beam.userData.startNode.uuid);
+            if (beam?.userData?.endNode) orphanCandidates.add(beam.userData.endNode.uuid);
+            if (Array.isArray(beam?.userData?.nodes)) {
+                beam.userData.nodes.forEach(n => n && orphanCandidates.add(n.uuid));
+            }
+
             beamsGroup.remove(beam);
-            beam.geometry.dispose();
-            beam.material.dispose();
+            if (beam.geometry) beam.geometry.dispose();
+            if (beam.material) beam.material.dispose();
             selectedBeams.delete(beam);
             deletedBeams++;
         });
@@ -532,8 +655,8 @@ export function deleteSelected(nodesGroup, beamsGroup, platesGroup) {
             removeConstraintSymbol(node, { scene: nodesGroup.parent });
         }
         
-        node.geometry.dispose();
-        node.material.dispose();
+        if (node.geometry) node.geometry.dispose();
+        if (node.material) node.material.dispose();
         deletedNodes++;
     });
     selectedNodes.clear();
@@ -541,77 +664,57 @@ export function deleteSelected(nodesGroup, beamsGroup, platesGroup) {
         clearSelectionHighlights(selectionHighlightsGroup);
     }
     
-    // Cleanup orphaned nodes (nodes not connected to any beam or plate)
-    cleanupOrphanedNodes(nodesGroup, beamsGroup, platesGroup);
+    // Cleanup orphaned nodes that were affected by this deletion.
+    // (We do NOT wipe unconnected modelling nodes the user is still placing.)
+    cleanupOrphanedNodes(nodesGroup, beamsGroup, platesGroup, { candidates: orphanCandidates });
     
     updateNodeLabels(nodesGroup);
     updateBeamLabels(beamsGroup);
     updatePlateLabels(platesGroup);
     
     console.log(`Deleted ${deletedNodes} node(s), ${deletedBeams} beam(s), and ${deletedPlates} plate(s)/element(s)`);
+    return deleted;
 }
 
 /**
  * Remove nodes that are not connected to any beam or plate
  */
-function cleanupOrphanedNodes(nodesGroup, beamsGroup, platesGroup) {
+function cleanupOrphanedNodes(nodesGroup, beamsGroup, platesGroup, { candidates } = {}) {
     if (!nodesGroup) return;
     
     const usedNodeIds = new Set();
-    
-    // 1. Check beams
+
+    const markNodeUsed = (node) => {
+        if (node && node.uuid) usedNodeIds.add(node.uuid);
+    };
+
+    // 0. Prefer explicit references where available
     if (beamsGroup) {
         beamsGroup.children.forEach(beam => {
-            // We need to find which nodes this beam connects
-            // This is tricky without explicit references, but we can check positions
-            // Or better, if we stored node references in beam.userData
-            // Assuming we don't have explicit refs, we check positions
-            
-            const beamPos = beam.position;
-            const beamLength = beam.geometry.parameters.height || 1;
-            const direction = new THREE.Vector3(0, 1, 0).applyQuaternion(beam.quaternion);
-            
-            const p1 = new THREE.Vector3().copy(beamPos).addScaledVector(direction, beamLength / 2);
-            const p2 = new THREE.Vector3().copy(beamPos).addScaledVector(direction, -beamLength / 2);
-            
-            nodesGroup.children.forEach(node => {
-                if (node.position.distanceTo(p1) < 0.01 || node.position.distanceTo(p2) < 0.01) {
-                    usedNodeIds.add(node.uuid);
+            if (beam.userData) {
+                if (beam.userData.startNode) markNodeUsed(beam.userData.startNode);
+                if (beam.userData.endNode) markNodeUsed(beam.userData.endNode);
+
+                // In case we stored an array
+                if (Array.isArray(beam.userData.nodes)) {
+                    beam.userData.nodes.forEach(markNodeUsed);
                 }
-            });
+            }
         });
     }
-    
-    // 2. Check plates
+
     if (platesGroup) {
         platesGroup.children.forEach(plate => {
-            // Check plate vertices
-            // If plate has userData.nodes, use that
-            // Otherwise check geometry
-            
-            // Check if plate has mesh elements (children)
-            // If so, the mesh nodes are used
-            
-            // Check original plate nodes
-            // We can check if nodes are close to plate vertices
-            const positions = plate.geometry.attributes.position.array;
-            for (let i = 0; i < positions.length; i += 3) {
-                const v = new THREE.Vector3(positions[i], positions[i+1], positions[i+2]);
-                nodesGroup.children.forEach(node => {
-                    if (node.position.distanceTo(v) < 0.01) {
-                        usedNodeIds.add(node.uuid);
-                    }
-                });
+            if (plate.userData && Array.isArray(plate.userData.nodes)) {
+                plate.userData.nodes.forEach(markNodeUsed);
             }
-            
-            // Also check mesh nodes if any
+
+            // Mesh element nodes (generated mesh) should always be explicit
             if (plate.children) {
                 plate.children.forEach(child => {
-                    if (child.userData.isMeshViz) {
-                        child.children.forEach(element => {
-                            if (element.userData.nodes) {
-                                element.userData.nodes.forEach(n => usedNodeIds.add(n.uuid));
-                            }
+                    if (child?.userData?.isMeshViz) {
+                        child.children?.forEach(element => {
+                            element?.userData?.nodes?.forEach(markNodeUsed);
                         });
                     }
                 });
@@ -619,10 +722,74 @@ function cleanupOrphanedNodes(nodesGroup, beamsGroup, platesGroup) {
         });
     }
     
+    // 1. Check beams (fallback to positional detection only if needed)
+    if (beamsGroup) {
+        beamsGroup.children.forEach(beam => {
+            if (beam.userData && (beam.userData.startNode || beam.userData.endNode || Array.isArray(beam.userData.nodes))) {
+                return;
+            }
+
+            const beamPos = beam.position;
+            const beamLength = beam.geometry?.parameters?.height || 1;
+            const direction = new THREE.Vector3(0, 1, 0).applyQuaternion(beam.quaternion);
+
+            const p1 = new THREE.Vector3().copy(beamPos).addScaledVector(direction, beamLength / 2);
+            const p2 = new THREE.Vector3().copy(beamPos).addScaledVector(direction, -beamLength / 2);
+
+            // Slightly looser tolerance to avoid floating-point misses
+            const tol = 0.05;
+            nodesGroup.children.forEach(node => {
+                if (node.position.distanceTo(p1) < tol || node.position.distanceTo(p2) < tol) {
+                    usedNodeIds.add(node.uuid);
+                }
+            });
+        });
+    }
+    
+    // 2. Check plates (fallback to geometry proximity only if we have no explicit nodes)
+    if (platesGroup) {
+        platesGroup.children.forEach(plate => {
+            if (plate.userData && Array.isArray(plate.userData.nodes)) {
+                return;
+            }
+
+            const attr = plate.geometry?.attributes?.position;
+            const positions = attr?.array;
+            if (!positions) return;
+
+            const tol = 0.05;
+            for (let i = 0; i < positions.length; i += 3) {
+                const v = new THREE.Vector3(positions[i], positions[i + 1], positions[i + 2]);
+                nodesGroup.children.forEach(node => {
+                    if (node.position.distanceTo(v) < tol) {
+                        usedNodeIds.add(node.uuid);
+                    }
+                });
+            }
+        });
+    }
+
+    // Safety: if we couldn't identify any used nodes but there *are* elements,
+    // do NOT delete everything.
+    const hasElements = (beamsGroup && beamsGroup.children.length > 0) || (platesGroup && platesGroup.children.length > 0);
+    if (hasElements && usedNodeIds.size === 0) {
+        console.warn('Orphan cleanup skipped: could not determine node connectivity');
+        return;
+    }
+    
     // 3. Remove unused nodes
     const nodesToRemove = [];
     nodesGroup.children.forEach(node => {
-        if (!usedNodeIds.has(node.uuid)) {
+        if (usedNodeIds.has(node.uuid)) return;
+
+        // Always allow cleanup of generated mesh nodes
+        if (node?.userData?.isMeshNode) {
+            nodesToRemove.push(node);
+            return;
+        }
+
+        // Only delete modelling nodes if they became orphaned due to the current delete op
+        if (candidates && candidates.has(node.uuid)) {
             nodesToRemove.push(node);
         }
     });
@@ -631,6 +798,12 @@ function cleanupOrphanedNodes(nodesGroup, beamsGroup, platesGroup) {
         nodesGroup.remove(node);
         if (node.geometry) node.geometry.dispose();
         if (node.material) node.material.dispose();
+
+        // Remove associated constraint symbol if any
+        if (nodesGroup.parent) {
+            removeConstraintSymbol(node, { scene: nodesGroup.parent });
+        }
+
         // Also remove from selection if present
         selectedNodes.delete(node);
         if (selectionHighlightsGroup) {

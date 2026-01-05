@@ -3,7 +3,17 @@
  * Manages mouse events, interaction modes, and user input
  */
 
-const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js');
+// Use Three.js from global (loaded via script tag).
+// IMPORTANT: this module may be evaluated before the script finishes loading.
+const THREE = new Proxy({}, {
+    get(_target, prop) {
+        const three = window.THREE;
+        if (!three) {
+            throw new Error('Three.js not loaded: window.THREE is undefined');
+        }
+        return three[prop];
+    }
+});
 import { selectedNodes, selectedBeams, selectedPlates, selectedElements, createNode, createBeam, createPlateMesh, findBeamBetweenPositions } from './geometry_manager.js';
 import { addNodeSelectionHighlight, removeNodeSelectionHighlight } from './scene_setup.js';
 
@@ -668,9 +678,15 @@ export function handleAddNodeModeMove(sceneData) {
     const point = new THREE.Vector3();
     raycaster.ray.intersectPlane(gridPlane, point);
 
+    // Match click behavior: in 2D mode, use current elevation.
+    let yCoord = 0;
+    if (window.getViewMode && window.getViewMode() === '2D' && window.get2DElevation) {
+        yCoord = window.get2DElevation();
+    }
+
     const snapped = new THREE.Vector3(
         Math.round(point.x),
-        0,
+        yCoord,
         Math.round(point.z)
     );
     

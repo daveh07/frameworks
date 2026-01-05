@@ -20,6 +20,10 @@ pub fn AnalysisPanel(
     let mut selected_contour = use_signal(|| "von_mises".to_string());
     let mut selected_surface = use_signal(|| "middle".to_string());
 
+    // Diagram state
+    // 'z' => Mz, 'y' => My
+    let mut selected_moment_axis = use_signal(|| "z".to_string());
+
     let run_analysis = move |_| {
         spawn(async move {
             is_analyzing.set(true);
@@ -217,11 +221,28 @@ pub fn AnalysisPanel(
                                 // Diagram buttons
                                 div { class: "diagram-controls",
                                     div { class: "control-group-label", "Diagrams" }
+
+                                    div { class: "control-row",
+                                        label { "Bending axis" }
+                                        select {
+                                            class: "contour-select",
+                                            value: "{selected_moment_axis}",
+                                            onchange: move |evt| {
+                                                let axis = evt.value();
+                                                selected_moment_axis.set(axis.clone());
+                                                eval(&format!("window.momentDiagramAxis = '{}';", axis));
+                                            },
+                                            option { value: "z", "Mz" }
+                                            option { value: "y", "My" }
+                                        }
+                                    }
+
                                     div { class: "button-row",
                                         button {
                                             class: "diagram-btn",
                                             onclick: move |_| {
-                                                eval("window.showBendingMomentDiagram()");
+                                                let axis = selected_moment_axis();
+                                                eval(&format!("window.momentDiagramAxis = '{}'; window.showBendingMomentDiagram();", axis));
                                             },
                                             "Bending Moment"
                                         }

@@ -1,5 +1,15 @@
 // loads_manager.js - Manage structural loads on beams
-const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js');
+// Use Three.js from global (loaded via script tag).
+// IMPORTANT: this module may be evaluated before the script finishes loading.
+const THREE = new Proxy({}, {
+    get(_target, prop) {
+        const three = window.THREE;
+        if (!three) {
+            throw new Error('Three.js not loaded: window.THREE is undefined');
+        }
+        return three[prop];
+    }
+});
 import { selectedBeams } from './geometry_manager.js';
 
 // Store all loads: Map<beamUuid, Array<LoadObject>>
@@ -258,6 +268,35 @@ export function clearLoadsFromPlates(plateIds, sceneData) {
     });
     
     console.log('Cleared loads from plates:', plateIds);
+}
+
+/**
+ * Clear all loads from specific mesh elements
+ * @param {string[]} elementIds
+ * @param {Object} sceneData
+ */
+export function clearLoadsFromElements(elementIds, sceneData) {
+    if (!elementIds || elementIds.length === 0) return;
+
+    elementIds.forEach(elId => {
+        const loads = elementLoads.get(elId);
+        if (loads) {
+            loads.forEach(load => {
+                const visual = loadVisuals.get(load.id);
+                if (visual && sceneData && sceneData.scene) {
+                    sceneData.scene.remove(visual);
+                    visual.traverse(child => {
+                        if (child.geometry) child.geometry.dispose();
+                        if (child.material) child.material.dispose();
+                    });
+                    loadVisuals.delete(load.id);
+                }
+            });
+            elementLoads.delete(elId);
+        }
+    });
+
+    console.log('Cleared loads from elements:', elementIds);
 }
 
 /**

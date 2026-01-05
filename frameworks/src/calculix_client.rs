@@ -126,10 +126,22 @@ pub struct AnalysisResults {
 pub struct BeamForces {
     pub element_id: usize,
     pub axial_force: f64,
+    #[serde(default)]
+    pub axial_force_start: f64,
+    #[serde(default)]
+    pub axial_force_end: f64,
     pub shear_y: f64,
     pub shear_z: f64,
     pub moment_y: f64,
+    #[serde(default)]
+    pub moment_y_start: f64,
+    #[serde(default)]
+    pub moment_y_end: f64,
     pub moment_z: f64,
+    #[serde(default)]
+    pub moment_z_start: f64,
+    #[serde(default)]
+    pub moment_z_end: f64,
     pub torsion: f64,
     #[serde(default)]
     pub combined_stress: f64,

@@ -17,9 +17,51 @@ enum Route {
 }
 
 const MAIN_CSS: Asset = asset!("/assets/main.css");
+const THREE_JS: Asset = asset!("/assets/three.min.js");
 
-// Inline JavaScript - combining scene and moment diagram scripts
-static VIEWPORT_SCRIPTS: &str = include_str!("viewport_combined.js");
+// Small, early-loaded JS hub so analysis results can be published even if
+// the Three canvas hasn't initialized yet.
+static ANALYSIS_RESULTS_HUB: &str = r#"(function initAnalysisResultsHub(){
+    if (window.__analysisResultsHubInitialized) {
+        return;
+    }
+
+    const handlerList = [];
+
+    function registerHandler(handler) {
+        if (typeof handler !== 'function') {
+            return;
+        }
+        if (!handlerList.includes(handler)) {
+            handlerList.push(handler);
+        }
+    }
+
+    window.analysisResults = window.analysisResults || null;
+    window.registerAnalysisResultsHandler = registerHandler;
+
+    const hub = function(results) {
+        window.analysisResults = results || null;
+        handlerList.forEach(handler => {
+            try {
+                handler(results);
+            } catch (error) {
+                console.error('Analysis handler failed:', error);
+            }
+        });
+    };
+
+    const previous = typeof window.updateAnalysisResults === 'function'
+        ? window.updateAnalysisResults
+        : null;
+
+    if (previous && previous !== hub) {
+        registerHandler(previous);
+    }
+
+    window.updateAnalysisResults = hub;
+    window.__analysisResultsHubInitialized = true;
+})();"#;
 
 fn main() {
     dioxus::launch(App);
@@ -29,8 +71,8 @@ fn main() {
 fn App() -> Element {
     rsx! {
         document::Link { rel: "stylesheet", href: MAIN_CSS }
-        document::Script { src: "https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js" }
-        script { {VIEWPORT_SCRIPTS} }
+        document::Script { src: THREE_JS }
+        script { {ANALYSIS_RESULTS_HUB} }
 
         Router::<Route> {}
     }

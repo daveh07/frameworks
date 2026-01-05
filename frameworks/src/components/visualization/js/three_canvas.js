@@ -3,7 +3,28 @@
  * Orchestrates scene initialization, camera controls, and user interactions
  */
 
-const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js');
+// Use Three.js from global (loaded via script tag).
+// IMPORTANT: this module may be evaluated before the script finishes loading.
+const THREE = new Proxy({}, {
+    get(_target, prop) {
+        const three = window.THREE;
+        if (!three) {
+            throw new Error('Three.js not loaded: window.THREE is undefined');
+        }
+        return three[prop];
+    }
+});
+
+async function waitForThree({ timeoutMs = 8000 } = {}) {
+    if (window.THREE) return;
+    const start = performance.now();
+    while (!window.THREE) {
+        if (performance.now() - start > timeoutMs) {
+            throw new Error('Timed out waiting for Three.js to load');
+        }
+        await new Promise(requestAnimationFrame);
+    }
+}
 
 // Import modules
 import { initializeScene, initializeCameraControls, setViewportView } from './scene_setup.js';
@@ -59,14 +80,16 @@ import {
     addDistributedLoad,
     addPressureLoad,
     clearLoadsFromBeams,
-    clearLoadsFromPlates
+    clearLoadsFromPlates,
+    clearLoadsFromElements
 } from './loads_manager.js';
 import {
     extractStructureData,
     getStructureJSON
 } from './structure_exporter.js';
 import {
-    generateMesh
+    generateMesh,
+    clearMesh
 } from './meshing_manager.js';
 import {
     initLabels,
@@ -115,6 +138,9 @@ export async function init_three_canvas(canvas) {
         throw new Error('Canvas element not provided');
     }
 
+    // Ensure Three.js script finished loading before any module touches THREE.*
+    await waitForThree();
+
     // Initialize scene
     sceneData = initializeScene(canvas);
     cameraControls = initializeCameraControls(sceneData.camera);
@@ -149,6 +175,7 @@ export async function init_three_canvas(canvas) {
     window.addPointLoad = addPointLoad;
     window.addDistributedLoad = addDistributedLoad;
     window.generateMesh = generateMesh;
+    window.clearMesh = (onlySelected = true) => clearMesh(sceneData, { onlySelected });
     if (window.registerAnalysisResultsHandler) {
         window.registerAnalysisResultsHandler(updateAnalysisResults);
     } else {
@@ -194,6 +221,7 @@ export async function init_three_canvas(canvas) {
     window.getViewMode = getViewMode;
     window.get2DElevation = get2DElevation;
     window.generateMesh = (type, size) => generateMesh(type, size, sceneData);
+    window.clearMesh = (onlySelected = true) => clearMesh(sceneData, { onlySelected });
     
     // Expose grid and axes toggle functions
     window.toggleViewportGrid = (visible) => {
@@ -330,8 +358,8 @@ export async function init_three_canvas(canvas) {
         // Get beam section properties
         const beamSection = window.currentBeamSection || {
             section_type: 'Rectangular',
-            width: 0.3,
-            height: 0.5,
+            width: 0.1,
+            height: 0.2,
             flange_thickness: 0.02,
             web_thickness: 0.015
         };
@@ -357,12 +385,34 @@ export async function init_three_canvas(canvas) {
         
         // Create physical beams
         sceneData.beamsGroup.children.forEach(beam => {
-            if (!beam.userData.startNode || !beam.userData.endNode) return;
+            if (!beam.userData.startNode || !beam.userData.endNode) {
+                console.warn('Beam missing start/end node references');
+                return;
+            }
             
-            const startPos = beam.userData.startNode.position;
-            const endPos = beam.userData.endNode.position;
+            // Use world positions so rendered geometry matches what the user sees,
+            // even if nodes/groups have transforms applied.
+            const startPosWorld = new THREE.Vector3();
+            const endPosWorld = new THREE.Vector3();
+            beam.userData.startNode.getWorldPosition(startPosWorld);
+            beam.userData.endNode.getWorldPosition(endPosWorld);
+
+            // Convert into physical group's local space for consistent placement.
+            const startPos = physicalGroup.worldToLocal(startPosWorld.clone());
+            const endPos = physicalGroup.worldToLocal(endPosWorld.clone());
             const direction = new THREE.Vector3().subVectors(endPos, startPos);
             const beamLength = direction.length();
+            
+            if (beamLength < 0.001) {
+                console.warn('Beam has zero length');
+                return;
+            }
+            
+            console.log(
+                `Rendering beam: start=(${startPos.x.toFixed(2)}, ${startPos.y.toFixed(2)}, ${startPos.z.toFixed(2)}), ` +
+                `end=(${endPos.x.toFixed(2)}, ${endPos.y.toFixed(2)}, ${endPos.z.toFixed(2)}), ` +
+                `length=${beamLength.toFixed(3)}`
+            );
             
             let beamGeom;
             
@@ -394,10 +444,35 @@ export async function init_three_canvas(canvas) {
             const midpoint = new THREE.Vector3().addVectors(startPos, endPos).multiplyScalar(0.5);
             physicalBeam.position.copy(midpoint);
             
-            // Orient beam
-            const up = new THREE.Vector3(0, 1, 0);
-            const quaternion = new THREE.Quaternion().setFromUnitVectors(up, direction.normalize());
-            physicalBeam.applyQuaternion(quaternion);
+            // Orient beam: geometry has length along local +Y.
+            // Use a stable orthonormal basis so section "roll" is consistent.
+            // local +Y: along beam axis
+            // local +Z: as close as possible to global up (or a fallback when vertical)
+            const yAxis = direction.clone().normalize();
+
+            // Preferred up is global +Y.
+            let preferredUp = new THREE.Vector3(0, 1, 0);
+            // Project preferredUp onto plane perpendicular to yAxis.
+            let zAxis = preferredUp.clone().sub(yAxis.clone().multiplyScalar(preferredUp.dot(yAxis)));
+            if (zAxis.lengthSq() < 1e-6) {
+                // Beam is near-vertical; pick a different reference so roll is deterministic.
+                preferredUp = new THREE.Vector3(0, 0, 1);
+                zAxis = preferredUp.clone().sub(yAxis.clone().multiplyScalar(preferredUp.dot(yAxis)));
+                if (zAxis.lengthSq() < 1e-6) {
+                    preferredUp = new THREE.Vector3(1, 0, 0);
+                    zAxis = preferredUp.clone().sub(yAxis.clone().multiplyScalar(preferredUp.dot(yAxis)));
+                }
+            }
+            zAxis.normalize();
+
+            const xAxis = new THREE.Vector3().crossVectors(yAxis, zAxis).normalize();
+            // Recompute zAxis for perfect orthogonality.
+            zAxis = new THREE.Vector3().crossVectors(xAxis, yAxis).normalize();
+
+            const basis = new THREE.Matrix4().makeBasis(xAxis, yAxis, zAxis);
+            physicalBeam.quaternion.setFromRotationMatrix(basis);
+            
+            console.log(`Beam positioned at midpoint=(${midpoint.x.toFixed(2)}, ${midpoint.y.toFixed(2)}, ${midpoint.z.toFixed(2)})`);
             
             physicalBeam.userData.isPhysicalGeometry = true;
             physicalBeam.userData.sourceBeam = beam.uuid;
@@ -1240,7 +1315,24 @@ export function clearNodeSelection() {
 }
 
 export function deleteSelected() {
-    deleteSelectedGeometry(sceneData.nodesGroup, sceneData.beamsGroup, sceneData.platesGroup);
+    // 1) Delete geometry and collect deleted IDs
+    const deleted = deleteSelectedGeometry(sceneData.nodesGroup, sceneData.beamsGroup, sceneData.platesGroup);
+
+    // 2) Delete any loads attached to deleted items
+    if (deleted) {
+        if (Array.isArray(deleted.beams) && deleted.beams.length > 0) {
+            clearLoadsFromBeams(deleted.beams, sceneData);
+        }
+        if (Array.isArray(deleted.plates) && deleted.plates.length > 0) {
+            clearLoadsFromPlates(deleted.plates, sceneData);
+        }
+        if (Array.isArray(deleted.elements) && deleted.elements.length > 0) {
+            clearLoadsFromElements(deleted.elements, sceneData);
+        }
+    }
+
+    // 3) Any change invalidates analysis diagrams
+    clearDiagrams();
 }
 
 /**

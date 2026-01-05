@@ -3,7 +3,17 @@
  * Visualizes bending moment, shear force diagrams and deformed shapes
  */
 
-const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js');
+// Use Three.js from global (loaded via script tag).
+// IMPORTANT: this module may be evaluated before the script finishes loading.
+const THREE = new Proxy({}, {
+    get(_target, prop) {
+        const three = window.THREE;
+        if (!three) {
+            throw new Error('Three.js not loaded: window.THREE is undefined');
+        }
+        return three[prop];
+    }
+});
 
 // Store analysis results globally
 window.analysisResults = window.analysisResults || null;
@@ -14,6 +24,25 @@ window.diagramData = {
     shearSpans: [],   // { startPos, endPos, length, udl, V_left, V_right }
     activeTooltip: null
 };
+
+// When showing analysis diagrams, hide the modelling labels group (node/beam/plate IDs)
+// so it doesn't clutter the results view. Restore when diagrams are cleared.
+function setModelLabelsVisibleForDiagrams(visible) {
+    const scene = window.sceneData?.scene;
+    if (!scene) return;
+
+    const labelsGroup = scene.getObjectByName('labelsGroup');
+    if (!labelsGroup) return;
+
+    if (!window.diagramData) window.diagramData = {};
+
+    // Save initial state once per diagram session.
+    if (window.diagramData._savedLabelsVisible === undefined) {
+        window.diagramData._savedLabelsVisible = labelsGroup.visible;
+    }
+
+    labelsGroup.visible = visible;
+}
 
 // Update analysis results handler
 function handleDiagramAnalysisResults(results) {
@@ -31,7 +60,6 @@ window.debugSupports = function() {
         console.log('No sceneData');
         return;
     }
-    
     console.log('=== DEBUG SUPPORTS ===');
     
     if (window.sceneData.nodesGroup) {
@@ -67,12 +95,14 @@ window.debugSupports = function() {
  */
 function createHighResLabel(text, color) {
     const dpr = window.devicePixelRatio || 1;
-    const fontSize = 42 * dpr;
+    // Higher base font size yields more pixels in the texture without changing world size
+    // (world size is controlled by sprite.scale below).
+    const fontSize = 64 * dpr;
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
     
     // Measure text first to size canvas appropriately
-    ctx.font = `500 ${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+    ctx.font = `400 ${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
     const metrics = ctx.measureText(text);
     const textWidth = metrics.width + 20 * dpr;
     const textHeight = fontSize + 20 * dpr;
@@ -85,26 +115,47 @@ function createHighResLabel(text, color) {
     
     // Draw text (medium weight, not bold)
     ctx.fillStyle = color;
-    ctx.font = `500 ${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+    ctx.font = `400 ${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
+    ctx.imageSmoothingEnabled = true;
     ctx.fillText(text, canvas.width / 2, canvas.height / 2);
     
     const texture = new THREE.CanvasTexture(canvas);
     texture.minFilter = THREE.LinearFilter;
     texture.magFilter = THREE.LinearFilter;
     texture.generateMipmaps = false;
+    // If a renderer is available, use max anisotropy to reduce shimmer at angles.
+    try {
+        const renderer = window.sceneData?.renderer;
+        if (renderer?.capabilities?.getMaxAnisotropy) {
+            texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+        }
+    } catch (_e) {}
     
-    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ 
-        map: texture, 
+    const spriteMaterial = new THREE.SpriteMaterial({
+        map: texture,
         transparent: true,
+        opacity: 1.0,
         depthTest: false,
-        depthWrite: false
-    }));
+        depthWrite: false,
+        // Use size attenuation so labels scale with the scene properly
+        sizeAttenuation: true,
+        // Avoid renderer tone mapping dimming bright label textures.
+        toneMapped: false
+    });
+    const sprite = new THREE.Sprite(spriteMaterial);
+
+    // Prevent labels from disappearing due to frustum culling edge cases.
+    sprite.frustumCulled = false;
+
+    // Always render labels above other geometry.
+    sprite.renderOrder = 10_000;
     
     // Scale sprite based on text length
     const aspect = canvas.width / canvas.height;
-    const baseHeight = 0.41;
+    // World-size scale for labels
+    const baseHeight = 0.35;
     sprite.scale.set(baseHeight * aspect, baseHeight, 1);
     
     return sprite;
@@ -199,8 +250,32 @@ function findContinuousBeamChains(beamsGroup) {
 function getSupportTypeAtPosition(pos, tol = 0.15) {
     if (!window.sceneData) {
         console.log('No sceneData found');
-        return 'free';
+        return 'fixed';
     }
+
+    const countConnectedBeams = (nodePos) => {
+        const beamsGroup = window.sceneData?.beamsGroup;
+        if (!beamsGroup) return 0;
+        let count = 0;
+        for (const beam of beamsGroup.children) {
+            const sp = beam.userData?.startNode?.position || beam.userData?.startPos;
+            const ep = beam.userData?.endNode?.position || beam.userData?.endPos;
+            if (!sp || !ep) continue;
+            if (nodePos.distanceTo(sp) < tol || nodePos.distanceTo(ep) < tol) count++;
+        }
+        return count;
+    };
+
+    const isNodeOnAnyPlate = (node) => {
+        const platesGroup = window.sceneData?.platesGroup;
+        if (!platesGroup) return false;
+        for (const plate of platesGroup.children) {
+            const nodes = plate.userData?.nodes;
+            if (!Array.isArray(nodes)) continue;
+            if (nodes.some(n => n && (n === node || n.uuid === node.uuid))) return true;
+        }
+        return false;
+    };
     
     // Check nodes group first
     if (window.sceneData.nodesGroup) {
@@ -220,6 +295,21 @@ function getSupportTypeAtPosition(pos, tol = 0.15) {
                 console.log('Found node at distance', dist.toFixed(3), 'supportType:', supportType);
                 if (supportType === 'fixed') return 'fixed';
                 if (supportType === 'pinned') return 'pinned';
+                if (supportType === 'free') return 'free';
+                if (typeof supportType === 'string' && supportType.startsWith('roller')) return 'pinned';
+                if (supportType === 'spring') return 'pinned';
+
+                // Implicit free end rule:
+                // If a beam end node has exactly one connected beam and no connected plates/supports,
+                // treat it as a free end without requiring the user to explicitly mark it.
+                const hasExplicitConstraint = !!node.userData?.constraint;
+                if (!hasExplicitConstraint) {
+                    const connectedBeams = countConnectedBeams(nodePos);
+                    const onPlate = isNodeOnAnyPlate(node);
+                    if (connectedBeams === 1 && !onPlate) {
+                        return 'free';
+                    }
+                }
             }
         }
     }
@@ -240,13 +330,37 @@ function getSupportTypeAtPosition(pos, tol = 0.15) {
                     console.log('Found constraint symbol at distance', dist.toFixed(3), 'type:', st);
                     if (st === 'fixed') return 'fixed';
                     if (st === 'pinned') return 'pinned';
+                    if (st === 'free') return 'free';
+                    if (typeof st === 'string' && st.startsWith('roller')) return 'pinned';
+                    if (st === 'spring') return 'pinned';
                 }
             }
         }
     }
     
     console.log('No support found at position');
-    return 'free';
+    // Current modelling assumption: all beam ends are fixed unless a support boundary condition exists.
+    return 'fixed';
+}
+
+function getPerpendicularOffsetDir(startPos, endPos) {
+    const axis = new THREE.Vector3().subVectors(endPos, startPos);
+    if (axis.lengthSq() < 1e-12) return new THREE.Vector3(0, 1, 0);
+    axis.normalize();
+
+    const tryRefs = [
+        new THREE.Vector3(0, 1, 0),
+        new THREE.Vector3(0, 0, 1),
+        new THREE.Vector3(1, 0, 0)
+    ];
+
+    for (const ref of tryRefs) {
+        // Project ref onto plane perpendicular to axis: ref - (ref·axis)axis
+        const dir = ref.clone().sub(axis.clone().multiplyScalar(ref.dot(axis)));
+        if (dir.lengthSq() > 1e-6) return dir.normalize();
+    }
+
+    return new THREE.Vector3(0, 1, 0);
 }
 
 /**
@@ -269,12 +383,161 @@ export function showBendingMomentDiagram() {
     
     // Clear existing diagrams
     clearDiagrams();
+
+    // Hide modelling labels while showing diagrams.
+    setModelLabelsVisibleForDiagrams(false);
     
     // Clear stored span data for hover
     window.diagramData.momentSpans = [];
     
     const diagramGroup = new THREE.Group();
     diagramGroup.name = 'bendingMomentDiagram';
+
+    // Prefer solver-derived beam end moments if available.
+    const solverBeamForces = window.analysisResults?.beam_forces;
+    const hasAnySolverMoments = Array.isArray(solverBeamForces) && solverBeamForces.some(bf => {
+        const mz0 = bf?.moment_z_start ?? 0;
+        const mz1 = bf?.moment_z_end ?? 0;
+        const mz = bf?.moment_z ?? 0;
+        const my0 = bf?.moment_y_start ?? 0;
+        const my1 = bf?.moment_y_end ?? 0;
+        const my = bf?.moment_y ?? 0;
+        return Math.abs(mz0) > 1e-9 || Math.abs(mz1) > 1e-9 || Math.abs(mz) > 1e-9 ||
+               Math.abs(my0) > 1e-9 || Math.abs(my1) > 1e-9 || Math.abs(my) > 1e-9;
+    });
+
+    // Which bending axis to plot for solver-derived moments.
+    // Frames may have members oriented in multiple directions, so a single global axis can hide
+    // moments on half the members. We therefore pick per-member unless the user explicitly
+    // requests an axis.
+    const requestedAxis = (window.momentDiagramAxis === 'y' || window.momentDiagramAxis === 'z')
+        ? window.momentDiagramAxis
+        : null;
+
+    function hasNonZeroMomentForAxis(bf, axis) {
+        const eps = 1e-9;
+        if (axis === 'y') {
+            const my0 = bf?.moment_y_start ?? bf?.moment_y ?? 0;
+            const my1 = bf?.moment_y_end ?? bf?.moment_y ?? 0;
+            return Math.abs(my0) > eps || Math.abs(my1) > eps;
+        }
+        const mz0 = bf?.moment_z_start ?? bf?.moment_z ?? 0;
+        const mz1 = bf?.moment_z_end ?? bf?.moment_z ?? 0;
+        return Math.abs(mz0) > eps || Math.abs(mz1) > eps;
+    }
+
+    function pickAxisForBeam(bf) {
+        if (requestedAxis && hasNonZeroMomentForAxis(bf, requestedAxis)) return requestedAxis;
+        if (requestedAxis) {
+            const fallback = requestedAxis === 'y' ? 'z' : 'y';
+            if (hasNonZeroMomentForAxis(bf, fallback)) return fallback;
+        }
+
+        // Auto: choose dominant component (by max absolute end moment).
+        const my0 = pickEndMomentKnm(bf, 'y', 'start');
+        const my1 = pickEndMomentKnm(bf, 'y', 'end');
+        const mz0 = pickEndMomentKnm(bf, 'z', 'start');
+        const mz1 = pickEndMomentKnm(bf, 'z', 'end');
+        const myMax = Math.max(Math.abs(my0), Math.abs(my1));
+        const mzMax = Math.max(Math.abs(mz0), Math.abs(mz1));
+        return myMax >= mzMax ? 'y' : 'z';
+    }
+
+    function pickEndMomentKnm(bf, axis, whichEnd) {
+        // Backend is N*m; convert to kN*m.
+        if (axis === 'y') {
+            const v = whichEnd === 'start'
+                ? (bf.moment_y_start ?? bf.moment_y ?? 0)
+                : (bf.moment_y_end ?? bf.moment_y ?? 0);
+            return v / 1000.0;
+        }
+
+        const v = whichEnd === 'start'
+            ? (bf.moment_z_start ?? bf.moment_z ?? 0)
+            : (bf.moment_z_end ?? bf.moment_z ?? 0);
+        return v / 1000.0;
+    }
+
+    if (hasAnySolverMoments) {
+        console.log('Using solver-derived beam end moments for diagram (axis: per-member; requested:', requestedAxis, ')');
+        console.log('solverBeamForces:', JSON.stringify(solverBeamForces, null, 2));
+
+        // Beam forces are sorted by element_id but may be sparse.
+        // Never index by array position; always map by element_id.
+        const forcesByElementId = new Map();
+        for (const bf of solverBeamForces) {
+            if (bf && Number.isInteger(bf.element_id)) {
+                forcesByElementId.set(bf.element_id, bf);
+            }
+        }
+
+        beamsGroup.children.forEach((beam, idx) => {
+            const bf = forcesByElementId.get(idx);
+            if (!bf) {
+                console.warn('No beam forces found for beam idx', idx);
+                return;
+            }
+
+            let startPos = beam.userData.startNode?.position || beam.userData.startPos;
+            let endPos = beam.userData.endNode?.position || beam.userData.endPos;
+            if (!startPos || !endPos) {
+                console.warn('Beam', idx, 'missing start/end positions', {startPos, endPos, userData: beam.userData});
+                return;
+            }
+
+            const L = new THREE.Vector3().subVectors(endPos, startPos).length();
+            if (!Number.isFinite(L) || L <= 1e-9) {
+                console.warn('Beam', idx, 'has invalid length', L);
+                return;
+            }
+
+            const axisForBeam = pickAxisForBeam(bf);
+            let M_left = pickEndMomentKnm(bf, axisForBeam, 'start');
+            let M_right = pickEndMomentKnm(bf, axisForBeam, 'end');
+            
+            // Enforce boundary conditions: pinned/roller/free supports have zero moment
+            const startSupport = getSupportTypeAtPosition(startPos);
+            const endSupport = getSupportTypeAtPosition(endPos);
+            if (startSupport === 'pinned' || startSupport === 'free') {
+                console.log(`Beam ${idx}: zeroing M_left (was ${M_left.toFixed(2)}) due to ${startSupport} support`);
+                M_left = 0;
+            }
+            if (endSupport === 'pinned' || endSupport === 'free') {
+                console.log(`Beam ${idx}: zeroing M_right (was ${M_right.toFixed(2)}) due to ${endSupport} support`);
+                M_right = 0;
+            }
+
+            // Per-member scaling keeps diagrams visible in frames where one member's
+            // large moments would otherwise shrink all others.
+            const maxAbsMoment = Math.max(0.1, Math.abs(M_left), Math.abs(M_right));
+            const diagramScale = (L * 0.25) / maxAbsMoment;
+            
+            console.log(`Beam ${idx} (axis ${axisForBeam}): L=${L.toFixed(3)}, M_left=${M_left.toFixed(2)}, M_right=${M_right.toFixed(2)}, startPos=${startPos.x.toFixed(2)},${startPos.y.toFixed(2)},${startPos.z.toFixed(2)}, endPos=${endPos.x.toFixed(2)},${endPos.y.toFixed(2)},${endPos.z.toFixed(2)}`);
+
+            // Store span data for hover (treat as linear moment with w=0)
+            window.diagramData.momentSpans.push({
+                startPos: startPos.clone(),
+                endPos: endPos.clone(),
+                length: L,
+                udl: 0,
+                M_left,
+                M_right,
+                axis: axisForBeam
+            });
+
+            const diagram = createContinuousMomentCurve(
+                startPos, endPos, L, 0, M_left, M_right,
+                { showLeftLabel: true, showRightLabel: true, diagramScale }
+            );
+
+            if (diagram) diagramGroup.add(diagram);
+        });
+
+        window.sceneData.scene.add(diagramGroup);
+        console.log('Bending moment diagram added to scene (solver-derived)');
+        initDiagramHover();
+        return;
+    }
     
     // Find continuous beam chains
     const chains = findContinuousBeamChains(beamsGroup);
@@ -362,7 +625,8 @@ export function showBendingMomentDiagram() {
                 length: span.length,
                 udl: span.udl,
                 M_left,
-                M_right
+                M_right,
+                axis: null
             });
             
             // Only show right label on the last span to avoid duplicates at continuous supports
@@ -711,11 +975,22 @@ function solveTridiagonal(a, b, c, d) {
 function createContinuousMomentCurve(startPos, endPos, L, w, M_left, M_right, options = {}) {
     const { showLeftLabel = true, showRightLabel = true, diagramScale: passedScale } = options;
     const group = new THREE.Group();
-    const upDir = new THREE.Vector3(0, 1, 0);
+    const offsetDir = getPerpendicularOffsetDir(startPos, endPos);
+
+    // Column detection: member axis nearly parallel to global Y.
+    // If it's a column, user wants moment diagram in yellow.
+    const axisDir = new THREE.Vector3().subVectors(endPos, startPos);
+    const axisLenSq = axisDir.lengthSq();
+    let isColumn = false;
+    if (axisLenSq > 1e-12) {
+        axisDir.normalize();
+        isColumn = Math.abs(axisDir.dot(new THREE.Vector3(0, 1, 0))) > 0.9;
+    }
     
     // Colors - teal for sagging, blue for hogging (diagram fill colors)
-    const saggingColor = 0x42f5b9;  // Teal for positive/sagging moments
-    const hoggingColor = 0x002fff;  // Blue for negative/hogging moments
+    // Columns: force yellow for both.
+    const saggingColor = isColumn ? 0xed7700 : 0x42f5b9;
+    const hoggingColor = isColumn ? 0xed7700 : 0x002fff;
     
     // For span with UDL w and end moments M_left, M_right:
     // M(x) = M_left + (M_right - M_left)*x/L + w*x*(L-x)/2
@@ -746,7 +1021,7 @@ function createContinuousMomentCurve(startPos, endPos, L, w, M_left, M_right, op
         
         // Positive moment (sagging) shown below, negative (hogging) shown above
         const offset = M * diagramScale;
-        const offsetPos = pos.clone().add(upDir.clone().multiplyScalar(-offset));
+        const offsetPos = pos.clone().add(offsetDir.clone().multiplyScalar(-offset));
         curvePoints.push(offsetPos);
         fillPoints.push(pos.clone());
     }
@@ -777,7 +1052,7 @@ function createContinuousMomentCurve(startPos, endPos, L, w, M_left, M_right, op
         const fillMat = new THREE.MeshBasicMaterial({ 
             color: fillColor, 
             transparent: true, 
-            opacity: 0.3,
+            opacity: isColumn ? 0.45 : 0.3,
             side: THREE.DoubleSide,
             depthWrite: false
         });
@@ -799,28 +1074,50 @@ function createContinuousMomentCurve(startPos, endPos, L, w, M_left, M_right, op
             maxPositiveIdx = i;
         }
     }
+
+    // Find most negative moment (hogging) for label
+    let mostNegativeMoment = 0;
+    let mostNegativeIdx = segments / 2;
+    for (let i = 0; i <= segments; i++) {
+        if (moments[i] < mostNegativeMoment) {
+            mostNegativeMoment = moments[i];
+            mostNegativeIdx = i;
+        }
+    }
     
-    // Label at max positive moment if significant
-    if (maxPositiveMoment > 0.1) {
-        const label = createHighResLabel(`${maxPositiveMoment.toFixed(1)} kNm`, '#002266');
+    // Label at max positive moment (only if non-trivial)
+    if (Number.isFinite(maxPositiveMoment) && Math.abs(maxPositiveMoment) > 0.01) {
+        console.log('Adding max+ moment label:', maxPositiveMoment.toFixed(1), 'at idx', maxPositiveIdx);
+        const label = createHighResLabel(`${maxPositiveMoment.toFixed(1)} kNm`, '#ffffff');
         label.position.copy(curvePoints[maxPositiveIdx]);
-        label.position.y -= 0.5;
+        label.position.add(offsetDir.clone().multiplyScalar(0.5));
+        group.add(label);
+    }
+
+    // Label at most negative moment (only if non-trivial)
+    if (Number.isFinite(mostNegativeMoment) && Math.abs(mostNegativeMoment) > 0.01) {
+        console.log('Adding max- moment label:', mostNegativeMoment.toFixed(1), 'at idx', mostNegativeIdx);
+        const label = createHighResLabel(`${mostNegativeMoment.toFixed(1)} kNm`, '#ffffff');
+        label.position.copy(curvePoints[mostNegativeIdx]);
+        label.position.add(offsetDir.clone().multiplyScalar(0.5));
         group.add(label);
     }
     
-    // Labels at supports if there's significant negative moment
+    // Labels at supports (only if non-trivial values)
     // Only show if the option is enabled (to avoid duplicates at continuous supports)
-    if (showLeftLabel && Math.abs(M_left) > 0.1) {
-        const labelLeft = createHighResLabel(`${M_left.toFixed(1)} kNm`, '#002266');
+    if (showLeftLabel && Number.isFinite(M_left) && Math.abs(M_left) > 0.01) {
+        console.log('Adding left support moment label:', M_left.toFixed(1));
+        const labelLeft = createHighResLabel(`${M_left.toFixed(1)} kNm`, '#ffffff');
         labelLeft.position.copy(curvePoints[0]);
-        labelLeft.position.y += 0.4;
+        labelLeft.position.add(offsetDir.clone().multiplyScalar(0.5));
         group.add(labelLeft);
     }
     
-    if (showRightLabel && Math.abs(M_right) > 0.1) {
-        const labelRight = createHighResLabel(`${M_right.toFixed(1)} kNm`, '#002266');
+    if (showRightLabel && Number.isFinite(M_right) && Math.abs(M_right) > 0.01) {
+        console.log('Adding right support moment label:', M_right.toFixed(1));
+        const labelRight = createHighResLabel(`${M_right.toFixed(1)} kNm`, '#ffffff');
         labelRight.position.copy(curvePoints[segments]);
-        labelRight.position.y += 0.4;
+        labelRight.position.add(offsetDir.clone().multiplyScalar(0.5));
         group.add(labelRight);
     }
     
@@ -965,7 +1262,7 @@ window.showShearForceDiagram = showShearForceDiagram;
 function createContinuousShearCurve(startPos, endPos, L, w, M_left, M_right, options = {}) {
     const { diagramScale: passedScale } = options;
     const group = new THREE.Group();
-    const upDir = new THREE.Vector3(0, 1, 0);
+    const offsetDir = getPerpendicularOffsetDir(startPos, endPos);
     
     // Red color for shear
     const shearColor = 0xb80015;
@@ -999,7 +1296,7 @@ function createContinuousShearCurve(startPos, endPos, L, w, M_left, M_right, opt
         shears.push(V);
         
         const offset = V * diagramScale;
-        const offsetPos = pos.clone().add(upDir.clone().multiplyScalar(-offset));
+        const offsetPos = pos.clone().add(offsetDir.clone().multiplyScalar(-offset));
         curvePoints.push(offsetPos);
         fillPoints.push(pos.clone());
     }
@@ -1033,16 +1330,39 @@ function createContinuousShearCurve(startPos, endPos, L, w, M_left, M_right, opt
     const curveMaterial = new THREE.LineBasicMaterial({ color: shearColor, linewidth: 2 });
     group.add(new THREE.Line(curveGeometry, curveMaterial));
     
-    // Labels at both ends
-    const labelLeft = createHighResLabel(`${V_left.toFixed(1)} kN`, shearColorHex);
-    labelLeft.position.copy(curvePoints[0]);
-    labelLeft.position.y -= (V_left > 0 ? 0.5 : -0.5);
-    group.add(labelLeft);
-    
-    const labelRight = createHighResLabel(`${V_right.toFixed(1)} kN`, shearColorHex);
-    labelRight.position.copy(curvePoints[segments]);
-    labelRight.position.y -= (V_right > 0 ? 0.5 : -0.5);
-    group.add(labelRight);
+    // Labels at max and min shear points (for this linear shear model, these end up at ends,
+    // but this also avoids missing labels when the sign flips).
+    let maxShear = -Infinity;
+    let maxShearIdx = 0;
+    let minShear = Infinity;
+    let minShearIdx = 0;
+    for (let i = 0; i < shears.length; i++) {
+        const V = shears[i];
+        if (V > maxShear) {
+            maxShear = V;
+            maxShearIdx = i;
+        }
+        if (V < minShear) {
+            minShear = V;
+            minShearIdx = i;
+        }
+    }
+
+    if (Number.isFinite(maxShear) && Math.abs(maxShear) > 0.01) {
+        console.log('Adding max shear label:', maxShear.toFixed(1));
+        const labelMax = createHighResLabel(`${maxShear.toFixed(1)} kN`, '#ffffff');
+        labelMax.position.copy(curvePoints[maxShearIdx]);
+        labelMax.position.add(offsetDir.clone().multiplyScalar(0.5));
+        group.add(labelMax);
+    }
+
+    if (Number.isFinite(minShear) && Math.abs(minShear) > 0.01 && minShearIdx !== maxShearIdx) {
+        console.log('Adding min shear label:', minShear.toFixed(1));
+        const labelMin = createHighResLabel(`${minShear.toFixed(1)} kN`, '#ffffff');
+        labelMin.position.copy(curvePoints[minShearIdx]);
+        labelMin.position.add(offsetDir.clone().multiplyScalar(0.5));
+        group.add(labelMin);
+    }
     
     return group;
 }
@@ -1237,6 +1557,12 @@ export function clearDiagrams() {
             }
         });
     });
+
+    // Restore modelling labels visibility.
+    if (window.diagramData && window.diagramData._savedLabelsVisible !== undefined) {
+        setModelLabelsVisibleForDiagrams(window.diagramData._savedLabelsVisible);
+        delete window.diagramData._savedLabelsVisible;
+    }
     
     console.log('Cleared', toRemove.length, 'diagram(s)');
 }
@@ -1247,6 +1573,8 @@ window.clearDiagrams = clearDiagrams;
  * Color beams by stress
  */
 export function colorBeamsByStress() {
+    setModelLabelsVisibleForDiagrams(false);
+    
     if (!window.analysisResults) {
         console.log('No analysis results available');
         return;
@@ -1531,7 +1859,12 @@ function showHoverIndicator(span, t) {
     const pos = new THREE.Vector3().lerpVectors(span.startPos, span.endPos, t);
     
     // Create a thin vertical plane (since THREE.Line linewidth doesn't work in WebGL)
-    const lineHeight = span.L * 0.3; // 30% of span length
+    const L = span?.length;
+    if (!Number.isFinite(L) || L <= 0) {
+        return;
+    }
+
+    const lineHeight = L * 0.3; // 30% of span length
     const lineWidth = 0.02; // Thin but visible width
     
     // Create plane geometry for the line
