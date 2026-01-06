@@ -1,24 +1,29 @@
 // loads_manager.js - Manage structural loads on beams
 const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js');
-import { selectedBeams } from './geometry_manager.js';
 
-// Store all loads: Map<beamUuid, Array<LoadObject>>
-const beamLoads = new Map();
-// Store plate loads: Map<plateUuid, Array<LoadObject>>
-const plateLoads = new Map();
-// Store element loads: Map<elementUuid, Array<LoadObject>>
-const elementLoads = new Map();
+// Get selectedBeams from global (set by three_canvas.js) to avoid module instance issues
+function getSelectedBeams() {
+    return window.selectedBeams || new Set();
+}
 
-// Export beamLoads, plateLoads, and elementLoads for structure exporter
+// Store all loads on window to ensure single source of truth across module instances
+// This fixes the issue where multiple ES module instances create separate Maps
+if (!window.beamLoads) window.beamLoads = new Map();
+if (!window.plateLoads) window.plateLoads = new Map();
+if (!window.elementLoads) window.elementLoads = new Map();
+
+// Use the global Maps
+const beamLoads = window.beamLoads;
+const plateLoads = window.plateLoads;
+const elementLoads = window.elementLoads;
+
+// Export for structure exporter
 export { beamLoads, plateLoads, elementLoads };
 
-// Expose globally for extraction
-window.beamLoads = beamLoads;
-window.plateLoads = plateLoads;
-window.elementLoads = elementLoads;
-
-// Store load visualizations: Map<loadId, THREE.Group>
-const loadVisuals = new Map();
+// Store load visualizations on window to persist across module instances
+// This fixes the toggle visibility issue where loadVisuals Map was getting reset
+if (!window.loadVisuals) window.loadVisuals = new Map();
+const loadVisuals = window.loadVisuals;
 
 // Load counter for unique IDs
 let loadIdCounter = 0;

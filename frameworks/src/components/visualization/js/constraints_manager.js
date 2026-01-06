@@ -6,11 +6,13 @@
 // Import THREE
 const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js');
 
-// Import selectedNodes from geometry_manager
-import { selectedNodes } from './geometry_manager.js';
-
 // Store constraint symbols for each node
 const constraintSymbols = new Map(); // nodeId -> constraint mesh group
+
+// Get selectedNodes from global (set by three_canvas.js) to avoid module instance issues
+function getSelectedNodes() {
+    return window.selectedNodes || new Set();
+}
 
 // Export for analysis
 export { constraintSymbols };
@@ -21,8 +23,9 @@ export { constraintSymbols };
  * @param {Object} sceneData - Scene data from scene_setup
  */
 export function applyNodeConstraints(constraintData, sceneData) {
+    const selectedNodes = getSelectedNodes();
     console.log('applyNodeConstraints called with:', constraintData, sceneData);
-    console.log('selectedNodes from import:', selectedNodes, 'size:', selectedNodes.size);
+    console.log('selectedNodes from global:', selectedNodes, 'size:', selectedNodes.size);
     
     if (!selectedNodes || selectedNodes.size === 0) {
         console.warn('No nodes selected for constraint application');
@@ -57,6 +60,7 @@ export function applyNodeConstraints(constraintData, sceneData) {
  * @param {Object} sceneData - Scene data
  */
 export function clearNodeConstraints(sceneData) {
+    const selectedNodes = getSelectedNodes();
     if (selectedNodes.size === 0) {
         console.warn('No nodes selected for constraint removal');
         return;
@@ -183,7 +187,7 @@ function createConstraintSymbol(node, supportTypeInfo, constraintData, sceneData
  * @param {THREE.Mesh} node - Node mesh
  * @param {Object} sceneData - Scene data
  */
-function removeConstraintSymbol(node, sceneData) {
+export function removeConstraintSymbol(node, sceneData) {
     const existingSymbol = constraintSymbols.get(node.uuid);
     if (existingSymbol) {
         sceneData.scene.remove(existingSymbol);

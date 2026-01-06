@@ -92,6 +92,12 @@ import {
 // Import FEA solver integration (attaches functions to window)
 import '/js/fea_integration.js';
 
+// Expose init entrypoint globally so the Rust wasm can call it without relying on
+// wasm-bindgen-generated snippet module imports.
+if (typeof window !== 'undefined' && !window.init_three_canvas) {
+    window.init_three_canvas = init_three_canvas;
+}
+
 // Global scene data
 let sceneData = null;
 let cameraControls = null;
@@ -131,10 +137,15 @@ export async function init_three_canvas(canvas) {
     // Expose sceneData globally for analysis
     window.sceneData = sceneData;
     
+    // Expose selection sets globally for cross-module access
+    window.selectedNodes = selectedNodes;
+    window.selectedBeams = selectedBeams;
+    window.selectedPlates = selectedPlates;
+    window.selectedElements = selectedElements;
+    
     // Expose extractStructureData globally
     window.extractStructureData = extractStructureData;
     window.getStructureJSON = getStructureJSON;
-    window.applyNodeConstraints = applyNodeConstraints;
     
     // Expose label toggles
     window.toggleNodeLabels = (visible) => toggleNodeLabels(visible, sceneData.nodesGroup);
@@ -397,10 +408,46 @@ export async function init_three_canvas(canvas) {
             const midpoint = new THREE.Vector3().addVectors(startPos, endPos).multiplyScalar(0.5);
             physicalBeam.position.copy(midpoint);
             
-            // Orient beam
+            // Orient beam - need to keep section "upright" (depth vertical)
             const up = new THREE.Vector3(0, 1, 0);
-            const quaternion = new THREE.Quaternion().setFromUnitVectors(up, direction.normalize());
+            const dirNorm = direction.clone().normalize();
+            
+            // First, rotate from default Y-up to beam direction
+            const quaternion = new THREE.Quaternion().setFromUnitVectors(up, dirNorm);
             physicalBeam.applyQuaternion(quaternion);
+            
+            // For non-vertical beams, we need to rotate about the beam axis to keep section upright
+            // The section depth (height) should remain vertical after all rotations
+            const isVertical = Math.abs(dirNorm.y) > 0.9;
+            if (!isVertical) {
+                // After the first rotation, the original X-axis (where section depth is) has moved
+                // For X-spanning beams: original X → -Y (vertical) - OK
+                // For Z-spanning beams: original X → X (horizontal) - WRONG, need correction
+                // 
+                // We want the section depth to always be in the global Y direction (vertical)
+                // Calculate the rotation needed about the beam axis
+                
+                // The "up" direction after first quaternion rotation
+                const currentUp = new THREE.Vector3(1, 0, 0).applyQuaternion(quaternion);
+                
+                // We want this to point as close to global Y as possible
+                // Project global Y onto the plane perpendicular to beam direction
+                const globalY = new THREE.Vector3(0, 1, 0);
+                const projectedY = globalY.clone().sub(dirNorm.clone().multiplyScalar(globalY.dot(dirNorm))).normalize();
+                
+                // Calculate angle between currentUp and projectedY
+                const angle = Math.acos(Math.max(-1, Math.min(1, currentUp.dot(projectedY))));
+                
+                // Determine sign of rotation using cross product
+                const cross = new THREE.Vector3().crossVectors(currentUp, projectedY);
+                const sign = cross.dot(dirNorm) > 0 ? 1 : -1;
+                
+                // Apply correction rotation about beam axis
+                if (angle > 0.01) {  // Only if meaningful rotation needed
+                    const correctionQuat = new THREE.Quaternion().setFromAxisAngle(dirNorm, sign * angle);
+                    physicalBeam.applyQuaternion(correctionQuat);
+                }
+            }
             
             physicalBeam.userData.isPhysicalGeometry = true;
             physicalBeam.userData.sourceBeam = beam.uuid;
@@ -670,9 +717,10 @@ export async function init_three_canvas(canvas) {
     // Expose load functions
     window.applyPointLoad = (loadData) => {
         console.log('window.applyPointLoad called with:', loadData);
-        console.log('selectedBeams:', selectedBeams, 'size:', selectedBeams.size);
-        if (sceneData && selectedBeams.size > 0) {
-            loadData.beamIds = Array.from(selectedBeams).map(b => b.uuid);
+        const beams = window.selectedBeams || selectedBeams;
+        console.log('selectedBeams:', beams, 'size:', beams.size);
+        if (sceneData && beams.size > 0) {
+            loadData.beamIds = Array.from(beams).map(b => b.uuid);
             addPointLoad(loadData, sceneData);
         } else {
             console.warn('No beams selected for point load');
@@ -681,9 +729,10 @@ export async function init_three_canvas(canvas) {
     
     window.applyDistributedLoad = (loadData) => {
         console.log('window.applyDistributedLoad called with:', loadData);
-        console.log('selectedBeams:', selectedBeams, 'size:', selectedBeams.size);
-        if (sceneData && selectedBeams.size > 0) {
-            loadData.beamIds = Array.from(selectedBeams).map(b => b.uuid);
+        const beams = window.selectedBeams || selectedBeams;
+        console.log('selectedBeams:', beams, 'size:', beams.size);
+        if (sceneData && beams.size > 0) {
+            loadData.beamIds = Array.from(beams).map(b => b.uuid);
             addDistributedLoad(loadData, sceneData);
         } else {
             console.warn('No beams selected for distributed load');
@@ -693,22 +742,24 @@ export async function init_three_canvas(canvas) {
     window.applyPressureLoad = (loadData) => {
         console.log('=== window.applyPressureLoad called ===');
         console.log('loadData:', loadData);
-        console.log('selectedPlates size:', selectedPlates.size);
-        console.log('selectedElements size:', selectedElements.size);
+        const plates = window.selectedPlates || selectedPlates;
+        const elements = window.selectedElements || selectedElements;
+        console.log('selectedPlates size:', plates.size);
+        console.log('selectedElements size:', elements.size);
         
-        if (selectedElements.size > 0) {
+        if (elements.size > 0) {
             // Element-level loading
             loadData.targetType = 'element';
-            loadData.elementIds = Array.from(selectedElements).map(el => el.uuid);
+            loadData.elementIds = Array.from(elements).map(el => el.uuid);
             console.log('Targeting specific elements:', loadData.elementIds.length);
             
             if (sceneData) {
                 addPressureLoad(loadData, sceneData);
             }
-        } else if (selectedPlates.size > 0) {
+        } else if (plates.size > 0) {
             // Plate-level loading
             loadData.targetType = 'plate';
-            loadData.plateIds = Array.from(selectedPlates).map(p => p.uuid);
+            loadData.plateIds = Array.from(plates).map(p => p.uuid);
             console.log('Targeting whole plates:', loadData.plateIds.length);
             
             if (sceneData) {
@@ -721,9 +772,10 @@ export async function init_three_canvas(canvas) {
     
     window.clearLoadsFromSelectedBeams = () => {
         console.log('clearLoadsFromSelectedBeams called');
-        console.log('selectedBeams:', selectedBeams, 'size:', selectedBeams.size);
-        if (sceneData && selectedBeams.size > 0) {
-            const beamIds = Array.from(selectedBeams).map(b => b.uuid);
+        const beams = window.selectedBeams || selectedBeams;
+        console.log('selectedBeams:', beams, 'size:', beams.size);
+        if (sceneData && beams.size > 0) {
+            const beamIds = Array.from(beams).map(b => b.uuid);
             clearLoadsFromBeams(beamIds, sceneData);
         } else {
             console.warn('No beams selected to clear loads from');
@@ -732,14 +784,16 @@ export async function init_three_canvas(canvas) {
 
     window.clearLoadsFromSelectedPlates = () => {
         console.log('clearLoadsFromSelectedPlates called');
+        const plates = window.selectedPlates || selectedPlates;
+        const elements = window.selectedElements || selectedElements;
         
         const platesToClear = new Set();
         
         // Add directly selected plates
-        selectedPlates.forEach(p => platesToClear.add(p));
+        plates.forEach(p => platesToClear.add(p));
         
         // Add parent plates of selected mesh elements
-        selectedElements.forEach(el => {
+        elements.forEach(el => {
             if (el.parent && el.parent.parent) {
                 platesToClear.add(el.parent.parent);
             }

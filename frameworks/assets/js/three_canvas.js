@@ -92,12 +92,6 @@ import {
 // Import FEA solver integration (attaches functions to window)
 import '/js/fea_integration.js';
 
-// Expose init entrypoint globally so the Rust wasm can call it without relying on
-// wasm-bindgen-generated snippet module imports.
-if (typeof window !== 'undefined' && !window.init_three_canvas) {
-    window.init_three_canvas = init_three_canvas;
-}
-
 // Global scene data
 let sceneData = null;
 let cameraControls = null;
@@ -137,15 +131,10 @@ export async function init_three_canvas(canvas) {
     // Expose sceneData globally for analysis
     window.sceneData = sceneData;
     
-    // Expose selection sets globally for cross-module access
-    window.selectedNodes = selectedNodes;
-    window.selectedBeams = selectedBeams;
-    window.selectedPlates = selectedPlates;
-    window.selectedElements = selectedElements;
-    
     // Expose extractStructureData globally
     window.extractStructureData = extractStructureData;
     window.getStructureJSON = getStructureJSON;
+    window.applyNodeConstraints = applyNodeConstraints;
     
     // Expose label toggles
     window.toggleNodeLabels = (visible) => toggleNodeLabels(visible, sceneData.nodesGroup);
@@ -717,10 +706,9 @@ export async function init_three_canvas(canvas) {
     // Expose load functions
     window.applyPointLoad = (loadData) => {
         console.log('window.applyPointLoad called with:', loadData);
-        const beams = window.selectedBeams || selectedBeams;
-        console.log('selectedBeams:', beams, 'size:', beams.size);
-        if (sceneData && beams.size > 0) {
-            loadData.beamIds = Array.from(beams).map(b => b.uuid);
+        console.log('selectedBeams:', selectedBeams, 'size:', selectedBeams.size);
+        if (sceneData && selectedBeams.size > 0) {
+            loadData.beamIds = Array.from(selectedBeams).map(b => b.uuid);
             addPointLoad(loadData, sceneData);
         } else {
             console.warn('No beams selected for point load');
@@ -729,10 +717,9 @@ export async function init_three_canvas(canvas) {
     
     window.applyDistributedLoad = (loadData) => {
         console.log('window.applyDistributedLoad called with:', loadData);
-        const beams = window.selectedBeams || selectedBeams;
-        console.log('selectedBeams:', beams, 'size:', beams.size);
-        if (sceneData && beams.size > 0) {
-            loadData.beamIds = Array.from(beams).map(b => b.uuid);
+        console.log('selectedBeams:', selectedBeams, 'size:', selectedBeams.size);
+        if (sceneData && selectedBeams.size > 0) {
+            loadData.beamIds = Array.from(selectedBeams).map(b => b.uuid);
             addDistributedLoad(loadData, sceneData);
         } else {
             console.warn('No beams selected for distributed load');
@@ -742,24 +729,22 @@ export async function init_three_canvas(canvas) {
     window.applyPressureLoad = (loadData) => {
         console.log('=== window.applyPressureLoad called ===');
         console.log('loadData:', loadData);
-        const plates = window.selectedPlates || selectedPlates;
-        const elements = window.selectedElements || selectedElements;
-        console.log('selectedPlates size:', plates.size);
-        console.log('selectedElements size:', elements.size);
+        console.log('selectedPlates size:', selectedPlates.size);
+        console.log('selectedElements size:', selectedElements.size);
         
-        if (elements.size > 0) {
+        if (selectedElements.size > 0) {
             // Element-level loading
             loadData.targetType = 'element';
-            loadData.elementIds = Array.from(elements).map(el => el.uuid);
+            loadData.elementIds = Array.from(selectedElements).map(el => el.uuid);
             console.log('Targeting specific elements:', loadData.elementIds.length);
             
             if (sceneData) {
                 addPressureLoad(loadData, sceneData);
             }
-        } else if (plates.size > 0) {
+        } else if (selectedPlates.size > 0) {
             // Plate-level loading
             loadData.targetType = 'plate';
-            loadData.plateIds = Array.from(plates).map(p => p.uuid);
+            loadData.plateIds = Array.from(selectedPlates).map(p => p.uuid);
             console.log('Targeting whole plates:', loadData.plateIds.length);
             
             if (sceneData) {
@@ -772,10 +757,9 @@ export async function init_three_canvas(canvas) {
     
     window.clearLoadsFromSelectedBeams = () => {
         console.log('clearLoadsFromSelectedBeams called');
-        const beams = window.selectedBeams || selectedBeams;
-        console.log('selectedBeams:', beams, 'size:', beams.size);
-        if (sceneData && beams.size > 0) {
-            const beamIds = Array.from(beams).map(b => b.uuid);
+        console.log('selectedBeams:', selectedBeams, 'size:', selectedBeams.size);
+        if (sceneData && selectedBeams.size > 0) {
+            const beamIds = Array.from(selectedBeams).map(b => b.uuid);
             clearLoadsFromBeams(beamIds, sceneData);
         } else {
             console.warn('No beams selected to clear loads from');
@@ -784,16 +768,14 @@ export async function init_three_canvas(canvas) {
 
     window.clearLoadsFromSelectedPlates = () => {
         console.log('clearLoadsFromSelectedPlates called');
-        const plates = window.selectedPlates || selectedPlates;
-        const elements = window.selectedElements || selectedElements;
         
         const platesToClear = new Set();
         
         // Add directly selected plates
-        plates.forEach(p => platesToClear.add(p));
+        selectedPlates.forEach(p => platesToClear.add(p));
         
         // Add parent plates of selected mesh elements
-        elements.forEach(el => {
+        selectedElements.forEach(el => {
             if (el.parent && el.parent.parent) {
                 platesToClear.add(el.parent.parent);
             }

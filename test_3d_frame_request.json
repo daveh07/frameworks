@@ -1,0 +1,45 @@
+{
+  "model": {
+    "nodes": [
+      {"name": "N1", "x": 0, "y": 0, "z": 0},
+      {"name": "N2", "x": 8, "y": 0, "z": 0},
+      {"name": "N3", "x": 0, "y": 0, "z": 7},
+      {"name": "N4", "x": 8, "y": 0, "z": 7},
+      {"name": "N5", "x": 0, "y": 3, "z": 0},
+      {"name": "N6", "x": 8, "y": 3, "z": 0},
+      {"name": "N7", "x": 0, "y": 3, "z": 7},
+      {"name": "N8", "x": 8, "y": 3, "z": 7}
+    ],
+    "members": [
+      {"name": "C1", "i_node": "N1", "j_node": "N5", "material": "Steel", "section": "Rect300x500"},
+      {"name": "C2", "i_node": "N2", "j_node": "N6", "material": "Steel", "section": "Rect300x500"},
+      {"name": "C3", "i_node": "N3", "j_node": "N7", "material": "Steel", "section": "Rect300x500"},
+      {"name": "C4", "i_node": "N4", "j_node": "N8", "material": "Steel", "section": "Rect300x500"},
+      {"name": "BX1", "i_node": "N5", "j_node": "N6", "material": "Steel", "section": "Rect300x500"},
+      {"name": "BX2", "i_node": "N7", "j_node": "N8", "material": "Steel", "section": "Rect300x500"},
+      {"name": "BZ1", "i_node": "N5", "j_node": "N7", "material": "Steel", "section": "Rect300x500"},
+      {"name": "BZ2", "i_node": "N6", "j_node": "N8", "material": "Steel", "section": "Rect300x500"}
+    ],
+    "materials": [
+      {"name": "Steel", "e": 200e9, "g": 77e9, "nu": 0.3, "rho": 7850}
+    ],
+    "sections": [
+      {"name": "Rect300x500", "a": 0.15, "iy": 0.003125, "iz": 0.001125, "j": 0.001}
+    ],
+    "supports": [
+      {"node": "N1", "dx": true, "dy": true, "dz": true, "rx": true, "ry": true, "rz": true},
+      {"node": "N2", "dx": true, "dy": true, "dz": true, "rx": true, "ry": true, "rz": true},
+      {"node": "N3", "dx": true, "dy": true, "dz": true, "rx": true, "ry": true, "rz": true},
+      {"node": "N4", "dx": true, "dy": true, "dz": true, "rx": true, "ry": true, "rz": true}
+    ],
+    "distributed_loads": [
+      {"member": "BX1", "direction": "FY", "w1": -10000, "w2": -10000, "case": "Case 1"},
+      {"member": "BX2", "direction": "FY", "w1": -10000, "w2": -10000, "case": "Case 1"},
+      {"member": "BZ1", "direction": "FY", "w1": -10000, "w2": -10000, "case": "Case 1"},
+      {"member": "BZ2", "direction": "FY", "w1": -10000, "w2": -10000, "case": "Case 1"}
+    ],
+    "load_combos": [
+      {"name": "Combo 1", "factors": {"Case 1": 1.0}}
+    ]
+  }
+}

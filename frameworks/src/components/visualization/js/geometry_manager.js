@@ -8,11 +8,17 @@ import { addNodeSelectionHighlight, removeNodeSelectionHighlight, clearSelection
 import { removeConstraintSymbol } from './constraints_manager.js';
 import { updateNodeLabels, updateBeamLabels, updatePlateLabels } from './labels_manager.js';
 
-// Selection state
-export const selectedNodes = new Set();
-export const selectedBeams = new Set();
-export const selectedPlates = new Set();
-export const selectedElements = new Set();
+// Selection state - use window globals to ensure single source of truth across module instances
+// This fixes the issue where multiple ES module instances create separate Sets
+if (!window.selectedNodes) window.selectedNodes = new Set();
+if (!window.selectedBeams) window.selectedBeams = new Set();
+if (!window.selectedPlates) window.selectedPlates = new Set();
+if (!window.selectedElements) window.selectedElements = new Set();
+
+export const selectedNodes = window.selectedNodes;
+export const selectedBeams = window.selectedBeams;
+export const selectedPlates = window.selectedPlates;
+export const selectedElements = window.selectedElements;
 
 // Reference to selection highlights group (set by three_canvas.js)
 let selectionHighlightsGroup = null;
@@ -541,8 +547,9 @@ export function deleteSelected(nodesGroup, beamsGroup, platesGroup) {
         clearSelectionHighlights(selectionHighlightsGroup);
     }
     
-    // Cleanup orphaned nodes (nodes not connected to any beam or plate)
-    cleanupOrphanedNodes(nodesGroup, beamsGroup, platesGroup);
+    // NOTE: Don't automatically cleanup orphaned nodes - it causes cascading deletions
+    // User can manually delete nodes they don't want
+    // cleanupOrphanedNodes(nodesGroup, beamsGroup, platesGroup);
     
     updateNodeLabels(nodesGroup);
     updateBeamLabels(beamsGroup);
@@ -553,6 +560,8 @@ export function deleteSelected(nodesGroup, beamsGroup, platesGroup) {
 
 /**
  * Remove nodes that are not connected to any beam or plate
+ * NOTE: This function is intentionally NOT called automatically on delete
+ * because it causes unwanted cascading deletions. Only call explicitly when needed.
  */
 function cleanupOrphanedNodes(nodesGroup, beamsGroup, platesGroup) {
     if (!nodesGroup) return;

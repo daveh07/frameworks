@@ -198,11 +198,31 @@ pub fn AnalysisPanel(
                                 button {
                                     class: "diagram-btn",
                                     onclick: move |_| {
-                                        eval("window.showFEABendingMomentDiagram()");
+                                        eval("window.showFEAAxialForceDiagram()");
                                     },
-                                    "Bending Moment"
+                                    "Axial Force"
                                 }
                             }
+                            div { class: "control-group-label", "Bending Moments" }
+                            div { class: "button-row",
+                                button {
+                                    class: "diagram-btn",
+                                    title: "Mz: Vertical bending (about local z-axis)",
+                                    onclick: move |_| {
+                                        eval("window.showFEABendingMomentDiagram()");
+                                    },
+                                    "Mz (Vertical)"
+                                }
+                                button {
+                                    class: "diagram-btn",
+                                    title: "My: Horizontal/lateral bending (about local y-axis)",
+                                    onclick: move |_| {
+                                        eval("window.showFEABendingMomentDiagramXZ()");
+                                    },
+                                    "My (Lateral)"
+                                }
+                            }
+                            div { class: "control-group-label", "Shear Forces" }
                             div { class: "button-row",
                                 button {
                                     class: "diagram-btn",
@@ -210,13 +230,6 @@ pub fn AnalysisPanel(
                                         eval("window.showFEAShearForceDiagram()");
                                     },
                                     "Shear Force"
-                                }
-                                button {
-                                    class: "diagram-btn",
-                                    onclick: move |_| {
-                                        eval("window.showFEAAxialForceDiagram()");
-                                    },
-                                    "Axial Force"
                                 }
                             }
                             div { class: "button-row",
