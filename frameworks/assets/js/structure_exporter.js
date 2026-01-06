@@ -124,16 +124,32 @@ export function extractStructureData(materialConfig, defaultThickness) {
             const endId = nodeMap.get(endNode.uuid);
             
             if (startId !== undefined && endId !== undefined) {
+                // Get section properties from userData or use defaults
+                const section = beam.userData.section || {
+                    width: 0.2,
+                    height: 0.3,
+                    section_type: "Rectangular"
+                };
+                
+                // Get member releases from userData or use defaults (all fixed)
+                const releases = beam.userData.releases || {
+                    i_node_ry: false,
+                    i_node_rz: false,
+                    j_node_ry: false,
+                    j_node_rz: false
+                };
+                
                 beams.push({
                     id: index,
                     node_ids: [startId, endId],
                     section: {
-                        width: 0.2,  // Default 200mm width
-                        height: 0.3, // Default 300mm height
-                        section_type: "Rectangular"
-                    }
+                        width: section.width || 0.2,
+                        height: section.height || 0.3,
+                        section_type: section.section_type || "Rectangular"
+                    },
+                    releases: releases
                 });
-                console.log(`Beam ${index}: Added with nodes ${startId} -> ${endId}`);
+                console.log(`Beam ${index}: Added with nodes ${startId} -> ${endId}, releases:`, releases);
             } else {
                 console.warn(`Beam ${index}: Node IDs not found in map`);
             }

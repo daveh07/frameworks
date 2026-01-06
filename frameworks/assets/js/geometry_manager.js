@@ -240,6 +240,13 @@ export function createBeam(beamsGroup, startPos, endPos, startNode = null, endNo
     beam.userData.startNode = startNode;
     beam.userData.endNode = endNode;
     beam.userData.id = getNextId(beamsGroup);
+    // Initialize member releases (default: all fixed)
+    beam.userData.releases = {
+        i_node_ry: false,
+        i_node_rz: false,
+        j_node_ry: false,
+        j_node_rz: false
+    };
     
     beamsGroup.add(beam);
     console.log(`Beam created between positions with ID ${beam.userData.id}`);

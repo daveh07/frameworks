@@ -464,16 +464,62 @@ impl FEModel {
                     continue;
                 }
                 
-                // Get FER in local coordinates
-                let direction = match load.direction {
-                    crate::loads::LoadDirection::Fx => 0,
-                    crate::loads::LoadDirection::Fy => 1,
-                    crate::loads::LoadDirection::Fz => 2,
-                    _ => continue, // Skip global direction loads for now
-                };
-                
                 let w = factor * load.w1; // Assume uniform for now
-                let fer_local = math::fer_uniform_load(w, length, direction);
+                let fer_local;
+                
+                // Handle both local and global direction loads
+                match load.direction {
+                    crate::loads::LoadDirection::Fx => {
+                        fer_local = math::fer_uniform_load(w, length, 0);
+                    }
+                    crate::loads::LoadDirection::Fy => {
+                        fer_local = math::fer_uniform_load(w, length, 1);
+                    }
+                    crate::loads::LoadDirection::Fz => {
+                        fer_local = math::fer_uniform_load(w, length, 2);
+                    }
+                    crate::loads::LoadDirection::FX | 
+                    crate::loads::LoadDirection::FY | 
+                    crate::loads::LoadDirection::FZ => {
+                        // Global direction loads need transformation
+                        // Create a global load vector and transform to local
+                        let global_dir = match load.direction {
+                            crate::loads::LoadDirection::FX => [1.0, 0.0, 0.0],
+                            crate::loads::LoadDirection::FY => [0.0, 1.0, 0.0],
+                            crate::loads::LoadDirection::FZ => [0.0, 0.0, 1.0],
+                            _ => unreachable!(),
+                        };
+                        
+                        // Get local direction by transforming global to local
+                        // T transforms local to global, so T^T transforms global to local
+                        // Extract the 3x3 rotation matrix from T
+                        let r = math::extract_rotation_matrix(&t);
+                        
+                        // Transform global direction to local
+                        let local_dir = [
+                            r[(0, 0)] * global_dir[0] + r[(0, 1)] * global_dir[1] + r[(0, 2)] * global_dir[2],
+                            r[(1, 0)] * global_dir[0] + r[(1, 1)] * global_dir[1] + r[(1, 2)] * global_dir[2],
+                            r[(2, 0)] * global_dir[0] + r[(2, 1)] * global_dir[1] + r[(2, 2)] * global_dir[2],
+                        ];
+                        
+                        // Apply FER in each local direction proportionally
+                        let mut fer_total = math::Vec12::zeros();
+                        if local_dir[0].abs() > 1e-10 {
+                            let fer = math::fer_uniform_load(w * local_dir[0], length, 0);
+                            for i in 0..12 { fer_total[i] += fer[i]; }
+                        }
+                        if local_dir[1].abs() > 1e-10 {
+                            let fer = math::fer_uniform_load(w * local_dir[1], length, 1);
+                            for i in 0..12 { fer_total[i] += fer[i]; }
+                        }
+                        if local_dir[2].abs() > 1e-10 {
+                            let fer = math::fer_uniform_load(w * local_dir[2], length, 2);
+                            for i in 0..12 { fer_total[i] += fer[i]; }
+                        }
+                        fer_local = fer_total;
+                    }
+                    _ => continue, // Skip moment loads
+                };
                 
                 // Transform to global
                 let fer_global = t.transpose() * fer_local;
@@ -750,8 +796,11 @@ impl FEModel {
             // Local displacements
             let d_local = t * d_global;
             
-            // Local stiffness
-            let k_local = math::member_local_stiffness(
+            // Get member releases for static condensation
+            let releases = member.releases.as_array();
+            
+            // Local stiffness - get the uncondensed matrix first
+            let k_local_uncondensed = math::member_local_stiffness(
                 material.e,
                 material.g,
                 section.a,
@@ -761,13 +810,18 @@ impl FEModel {
                 length,
             );
             
-            // Local forces from nodal displacements: F_elastic = K_local * d_local
+            // Apply static condensation for releases (same as Pynite's k() method)
+            // This sets rows/columns for released DOFs to zero, so F = K_condensed * d 
+            // will give zero forces at released DOFs
+            let k_local = math::apply_releases(&k_local_uncondensed, &releases);
+            
+            // Local forces from nodal displacements: F_elastic = K_condensed * d_local
             let mut f_local = k_local * d_local;
             
             // Add fixed end reactions (FER) from distributed loads
             // This is critical: FER accounts for loads applied between nodes
-            // Following PyNite's convention: F = K*d + FER
-            // FER represents the member end forces due to loads between nodes
+            // Following PyNite's convention: F = K*d + FER_condensed
+            // The FER must also be condensed for releases (same as stiffness)
             if let Some(loads) = self.member_dist_loads.get(&member_name) {
                 for load in loads {
                     let factor = combo.factor(&load.case);
@@ -775,23 +829,72 @@ impl FEModel {
                         continue;
                     }
                     
-                    // Get direction in local coordinates
-                    let direction = match load.direction {
-                        crate::loads::LoadDirection::Fx => 0,
-                        crate::loads::LoadDirection::Fy => 1,
-                        crate::loads::LoadDirection::Fz => 2,
-                        _ => continue, // Skip global direction loads for now
+                    let w = factor * load.w1; // Assume uniform load
+                    let fer_uncondensed;
+                    
+                    // Handle both local and global direction loads
+                    match load.direction {
+                        crate::loads::LoadDirection::Fx => {
+                            fer_uncondensed = math::fer_uniform_load(w, length, 0);
+                        }
+                        crate::loads::LoadDirection::Fy => {
+                            fer_uncondensed = math::fer_uniform_load(w, length, 1);
+                        }
+                        crate::loads::LoadDirection::Fz => {
+                            fer_uncondensed = math::fer_uniform_load(w, length, 2);
+                        }
+                        crate::loads::LoadDirection::FX | 
+                        crate::loads::LoadDirection::FY | 
+                        crate::loads::LoadDirection::FZ => {
+                            // Global direction loads need transformation
+                            let global_dir = match load.direction {
+                                crate::loads::LoadDirection::FX => [1.0, 0.0, 0.0],
+                                crate::loads::LoadDirection::FY => [0.0, 1.0, 0.0],
+                                crate::loads::LoadDirection::FZ => [0.0, 0.0, 1.0],
+                                _ => unreachable!(),
+                            };
+                            
+                            // Get local direction by transforming global to local
+                            let r = math::extract_rotation_matrix(&t);
+                            let local_dir = [
+                                r[(0, 0)] * global_dir[0] + r[(0, 1)] * global_dir[1] + r[(0, 2)] * global_dir[2],
+                                r[(1, 0)] * global_dir[0] + r[(1, 1)] * global_dir[1] + r[(1, 2)] * global_dir[2],
+                                r[(2, 0)] * global_dir[0] + r[(2, 1)] * global_dir[1] + r[(2, 2)] * global_dir[2],
+                            ];
+                            
+                            // Apply FER in each local direction proportionally
+                            let mut fer_total = math::Vec12::zeros();
+                            if local_dir[0].abs() > 1e-10 {
+                                let f = math::fer_uniform_load(w * local_dir[0], length, 0);
+                                for i in 0..12 { fer_total[i] += f[i]; }
+                            }
+                            if local_dir[1].abs() > 1e-10 {
+                                let f = math::fer_uniform_load(w * local_dir[1], length, 1);
+                                for i in 0..12 { fer_total[i] += f[i]; }
+                            }
+                            if local_dir[2].abs() > 1e-10 {
+                                let f = math::fer_uniform_load(w * local_dir[2], length, 2);
+                                for i in 0..12 { fer_total[i] += f[i]; }
+                            }
+                            fer_uncondensed = fer_total;
+                        }
+                        _ => continue, // Skip moment loads
                     };
                     
-                    let w = factor * load.w1; // Assume uniform load
-                    let fer = math::fer_uniform_load(w, length, direction);
+                    // Apply static condensation to FER for releases (PyNite method)
+                    // fer_condensed = fer1 - k12 * inv(k22) * fer2
+                    let fer_condensed = math::apply_fer_releases(&fer_uncondensed, &k_local_uncondensed, &releases);
                     
-                    // Add FER to elastic forces: F_member = K*d + FER
+                    // Add condensed FER to elastic forces: F_member = K*d + FER_condensed
                     for i in 0..12 {
-                        f_local[i] += fer[i];
+                        f_local[i] += fer_condensed[i];
                     }
                 }
             }
+            
+            // Note: We no longer need to zero out forces at released DOFs
+            // because the condensed stiffness and condensed FER already account for releases.
+            // The forces at released DOFs should naturally be zero from the condensation.
             
             // Store results
             let mut forces = [0.0; 12];

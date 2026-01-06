@@ -551,6 +551,7 @@ fn ViewOptionsToolbar() -> Element {
     let mut show_mesh_element_labels = use_signal(|| false);
     let mut wireframe_mode = use_signal(|| true); // true = wireframe, false = solid
     let mut nodes_visible = use_signal(|| true); // nodes visible by default
+    let mut releases_visible = use_signal(|| true); // member releases visible by default
     
     rsx! {
         div { class: "view-options-toolbar",
@@ -583,6 +584,16 @@ fn ViewOptionsToolbar() -> Element {
                     eval(&format!("if (window.toggleBeamLabels) window.toggleBeamLabels({});", new_val));
                 },
                 "B"
+            }
+            button {
+                class: if releases_visible() { "view-option-btn active" } else { "view-option-btn" },
+                title: "Toggle Member Releases (○ = Pinned, × = Fixed)",
+                onclick: move |_| {
+                    let new_val = !releases_visible();
+                    releases_visible.set(new_val);
+                    eval(&format!("if (window.toggleReleasesVisibility) window.toggleReleasesVisibility({});", new_val));
+                },
+                "R"
             }
             button {
                 class: if show_plate_labels() { "view-option-btn active" } else { "view-option-btn" },

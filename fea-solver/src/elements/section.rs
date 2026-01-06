@@ -217,7 +217,7 @@ mod tests {
     #[test]
     fn test_circular_section() {
         let section = Section::circular(0.5);
-        let r = 0.25;
+        let r = 0.25_f64;
         let expected_a = std::f64::consts::PI * r.powi(2);
         
         assert!((section.a - expected_a).abs() < 1e-10);

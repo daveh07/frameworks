@@ -1,0 +1,36 @@
+{
+  "model": {
+    "nodes": [
+      { "id": 0, "x": 0.0, "y": 0.0, "z": 0.0 },
+      { "id": 1, "x": 4.0, "y": 0.0, "z": 0.0 }
+    ],
+    "beams": [
+      {
+        "id": 0,
+        "node_ids": [0, 1],
+        "section": {
+          "width": 0.1,
+          "height": 0.2,
+          "section_type": "Rectangular"
+        }
+      }
+    ],
+    "shells": [],
+    "material": {
+      "name": "Steel",
+      "elastic_modulus": 2.1e11,
+      "poisson_ratio": 0.3,
+      "density": 7850.0
+    },
+    "supports": [
+      { "node_id": 0, "constraint_type": "Pinned" },
+      { "node_id": 1, "constraint_type": "RollerX" }
+    ],
+    "point_loads": [],
+    "distributed_loads": [
+      { "element_ids": [0], "load_type": { "Uniform": { "value": -10.0, "direction": "Y" } } }
+    ],
+    "pressure_loads": []
+  },
+  "use_mock": false
+}

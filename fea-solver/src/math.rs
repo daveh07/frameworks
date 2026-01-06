@@ -122,6 +122,18 @@ pub fn member_transformation_matrix(
     t
 }
 
+/// Extract the 3x3 rotation matrix from a 12x12 transformation matrix
+/// 
+/// The transformation matrix has 4 identical 3x3 rotation blocks on the diagonal.
+/// This extracts the first one.
+pub fn extract_rotation_matrix(t: &Mat12) -> Mat3 {
+    Mat3::new(
+        t[(0, 0)], t[(0, 1)], t[(0, 2)],
+        t[(1, 0)], t[(1, 1)], t[(1, 2)],
+        t[(2, 0)], t[(2, 1)], t[(2, 2)],
+    )
+}
+
 /// Compute the local stiffness matrix for a 3D frame element
 /// 
 /// # Arguments
@@ -297,6 +309,80 @@ pub fn apply_releases(k: &Mat12, releases: &[bool; 12]) -> Mat12 {
     }
     
     k_result
+}
+
+/// Apply static condensation to the fixed end reaction vector for released DOFs
+/// Following PyNite's method: fer_condensed = fer1 - k12 * inv(k22) * fer2
+/// 
+/// # Arguments
+/// * `fer` - Uncondensed fixed end reaction vector  
+/// * `k` - Uncondensed local stiffness matrix
+/// * `releases` - Boolean array indicating which DOFs are released
+pub fn apply_fer_releases(fer: &Vec12, k: &Mat12, releases: &[bool; 12]) -> Vec12 {
+    // Find unreleased and released DOFs
+    let unreleased: std::vec::Vec<usize> = releases
+        .iter()
+        .enumerate()
+        .filter_map(|(i, &released)| if !released { Some(i) } else { None })
+        .collect();
+    
+    let released: std::vec::Vec<usize> = releases
+        .iter()
+        .enumerate()
+        .filter_map(|(i, &released)| if released { Some(i) } else { None })
+        .collect();
+    
+    if released.is_empty() {
+        return *fer;
+    }
+    
+    let n1 = unreleased.len();
+    let n2 = released.len();
+    
+    // Partition stiffness matrix k12 and k22
+    let mut k12 = DMatrix::zeros(n1, n2);
+    let mut k22 = DMatrix::zeros(n2, n2);
+    
+    for (i, &ui) in unreleased.iter().enumerate() {
+        for (j, &rj) in released.iter().enumerate() {
+            k12[(i, j)] = k[(ui, rj)];
+        }
+    }
+    
+    for (i, &ri) in released.iter().enumerate() {
+        for (j, &rj) in released.iter().enumerate() {
+            k22[(i, j)] = k[(ri, rj)];
+        }
+    }
+    
+    // Partition FER vector: fer1 (unreleased), fer2 (released)
+    let mut fer1 = DVector::zeros(n1);
+    let mut fer2 = DVector::zeros(n2);
+    
+    for (i, &ui) in unreleased.iter().enumerate() {
+        fer1[i] = fer[ui];
+    }
+    for (i, &ri) in released.iter().enumerate() {
+        fer2[i] = fer[ri];
+    }
+    
+    // Static condensation: fer_condensed = fer1 - k12 * inv(k22) * fer2
+    let k22_inv = match k22.clone().try_inverse() {
+        Some(inv) => inv,
+        None => return *fer, // Return original if singular
+    };
+    
+    let fer_condensed = &fer1 - &k12 * &k22_inv * &fer2;
+    
+    // Expand back to 12-element vector with zeros for released DOFs
+    let mut fer_result = Vec12::zeros();
+    
+    for (i, &ui) in unreleased.iter().enumerate() {
+        fer_result[ui] = fer_condensed[i];
+    }
+    // Released DOFs remain zero
+    
+    fer_result
 }
 
 /// Compute fixed end reactions for a uniformly distributed load

@@ -86,6 +86,20 @@ struct MemberData {
     section: String,
     #[serde(default)]
     rotation: f64,
+    #[serde(default)]
+    releases: Option<MemberReleasesData>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct MemberReleasesData {
+    #[serde(default)]
+    i_node_ry: bool,
+    #[serde(default)]
+    i_node_rz: bool,
+    #[serde(default)]
+    j_node_ry: bool,
+    #[serde(default)]
+    j_node_rz: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -255,10 +269,22 @@ fn run_analysis(request: AnalysisRequest) -> Result<ResultsData, fea_solver::err
         model.add_node(&node.name, Node::new(node.x, node.y, node.z))?;
     }
 
-    // Add members
+    // Add members with user-specified releases only
+    // Note: We do NOT automatically release moments at pinned supports anymore.
+    // The user explicitly controls releases via the beam properties panel.
+    // Pinned supports already have free rotations at the support DOF level.
     for member in request.model.members {
         let mut m = Member::new(&member.i_node, &member.j_node, &member.material, &member.section);
         m.rotation = member.rotation;
+        
+        // Apply user-specified releases from the request
+        if let Some(ref releases) = member.releases {
+            // Apply user-specified releases: [DX, DY, DZ, RX, RY, RZ]
+            m.releases.i_node = [false, false, false, false, releases.i_node_ry, releases.i_node_rz];
+            m.releases.j_node = [false, false, false, false, releases.j_node_ry, releases.j_node_rz];
+        }
+        // If no releases specified, member defaults to fully fixed connections (all false)
+        
         model.add_member(&member.name, m)?;
     }
 
@@ -280,12 +306,12 @@ fn run_analysis(request: AnalysisRequest) -> Result<ResultsData, fea_solver::err
 
     // Add distributed loads on members
     for load in request.model.distributed_loads {
-        // Parse direction (FX, FY, FZ, etc.)
+        // Parse direction - use GLOBAL directions since loads from UI are in global coords
         let dir = match load.direction.to_uppercase().as_str() {
-            "FX" => LoadDirection::Fx,
-            "FY" => LoadDirection::Fy,
-            "FZ" => LoadDirection::Fz,
-            _ => LoadDirection::Fy, // Default to Fy (gravity direction)
+            "FX" => LoadDirection::FX,  // Global X
+            "FY" => LoadDirection::FY,  // Global Y (gravity direction)
+            "FZ" => LoadDirection::FZ,  // Global Z
+            _ => LoadDirection::FY,     // Default to global Y (gravity direction)
         };
         
         // Use uniform load (w1 = w2) over entire member

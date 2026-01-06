@@ -4,6 +4,49 @@
 const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js');
 
 // ========================
+// Diagram Scale and State
+// ========================
+
+// Initialize diagram scale if not already set
+if (typeof window.diagramScale === 'undefined') {
+    window.diagramScale = 1.0;
+}
+
+// Track current diagram type for refresh on scale change
+window.currentDiagramType = null;
+
+// Function to refresh the current diagram with new scale
+window.refreshCurrentDiagram = function() {
+    if (!window.currentDiagramType) return;
+    
+    switch (window.currentDiagramType) {
+        case 'moment_xy':
+            window.showFEABendingMomentDiagram();
+            break;
+        case 'moment_xz':
+            window.showFEABendingMomentDiagramXZ();
+            break;
+        case 'shear':
+            window.showFEAShearForceDiagram();
+            break;
+        case 'axial':
+            window.showFEAAxialForceDiagram();
+            break;
+        case 'deformed':
+            if (window.lastDeformScale) {
+                window.showFEADeformedShape(window.lastDeformScale);
+            }
+            break;
+    }
+};
+
+// Function to set diagram scale from UI slider
+window.setDiagramScale = function(scale) {
+    window.diagramScale = Math.max(0.1, Math.min(10, scale));
+    window.refreshCurrentDiagram();
+};
+
+// ========================
 // FEA Server URL Configuration
 // ========================
 
@@ -147,15 +190,31 @@ window.extractFEAStructure = function(materialConfig, beamSectionConfig) {
                     // For vertical columns, rotation doesn't matter for symmetric sections
                 }
                 
+                // Get member releases from userData (default: all fixed)
+                // Handle empty objects {} by checking for actual properties
+                const userReleases = beamMesh.userData.releases;
+                const releases = (userReleases && typeof userReleases.i_node_ry === 'boolean') ? {
+                    i_node_ry: !!userReleases.i_node_ry,
+                    i_node_rz: !!userReleases.i_node_rz,
+                    j_node_ry: !!userReleases.j_node_ry,
+                    j_node_rz: !!userReleases.j_node_rz
+                } : {
+                    i_node_ry: false,
+                    i_node_rz: false,
+                    j_node_ry: false,
+                    j_node_rz: false
+                };
+                
                 model.members.push({
                     name: memberName,
                     i_node: startNodeName,
                     j_node: endNodeName,
                     material: model.materials[0].name,
                     section: sectionProps.name,
-                    rotation: rotation
+                    rotation: rotation,
+                    releases: releases
                 });
-                console.log(`Member ${memberName}: ${startNodeName} -> ${endNodeName}, rotation=${rotation}°`);
+                console.log(`Member ${memberName}: ${startNodeName} -> ${endNodeName}, rotation=${rotation}°, releases:`, releases);
                 memberIdx++;
             }
         }
@@ -422,9 +481,19 @@ window.runFEAAnalysis = async function(materialConfig, beamSectionConfig, analys
         });
 
         if (!response.ok) {
-            const error = `HTTP error: ${response.status}`;
-            if (window.addSolverLog) window.addSolverLog(error, 'error');
-            return { error };
+            // Try to get error message from response body
+            let errorMsg = `HTTP error: ${response.status}`;
+            try {
+                const errorData = await response.json();
+                if (errorData.error) {
+                    errorMsg = errorData.error;
+                }
+            } catch (e) {
+                // Response body wasn't JSON
+            }
+            if (window.addSolverLog) window.addSolverLog(errorMsg, 'error');
+            console.error('FEA Server Error:', errorMsg);
+            return { error: errorMsg };
         }
 
         const data = await response.json();
@@ -526,13 +595,17 @@ window.clearFEADiagrams = function() {
         }
     });
     window.feaDiagramObjects = [];
+    window.currentDiagramType = null;
     
     console.log('FEA diagrams cleared');
 };
 
 // Show deformed shape
 window.showFEADeformedShape = function(scale = 50) {
+    window.currentDiagramType = 'deformed';
+    window.lastDeformScale = scale;
     window.clearFEADiagrams();
+    window.currentDiagramType = 'deformed'; // Re-set after clear
     
     const results = window.feaResults;
     const model = window.feaModel;
@@ -760,6 +833,20 @@ window.showFEABendingMomentDiagramInternal = function(plane = 'XY') {
         distLoadsMap.get(load.member).push(load);
     });
 
+    // Pre-pass: Calculate global maximum moment across all members to determine
+    // the zero-tolerance threshold. Values below 1% of max are treated as zero
+    // to eliminate numerical precision artifacts in symmetrical structures.
+    let globalMaxMoment = 0;
+    results.member_forces.forEach(f => {
+        globalMaxMoment = Math.max(globalMaxMoment, 
+            Math.abs(f.moment_z_i), Math.abs(f.moment_z_j),
+            Math.abs(f.moment_y_i), Math.abs(f.moment_y_j)
+        );
+    });
+    // Tolerance: 1% of max moment (or 10 N·m minimum to avoid div by zero issues)
+    const momentTolerance = Math.max(globalMaxMoment * 0.01, 10);
+    console.log(`Global max moment: ${(globalMaxMoment/1000).toFixed(2)} kNm, tolerance: ${(momentTolerance/1000).toFixed(3)} kNm`);
+
     // Colors for moment diagram
     // Engineering convention: sagging = positive moment = tension at bottom fiber = blue
     // Hogging = negative moment = tension at top fiber = red
@@ -906,6 +993,12 @@ window.showFEABendingMomentDiagramInternal = function(plane = 'XY') {
             }
         }
 
+        // Apply tolerance: treat near-zero moments as exactly zero
+        // This eliminates numerical precision artifacts in symmetrical structures
+        if (Math.abs(Mi) < momentTolerance) Mi = 0;
+        if (Math.abs(Mj) < momentTolerance) Mj = 0;
+        if (Math.abs(Vi) < momentTolerance) Vi = 0;
+
         // For member with shear, end moments and UDL:
         // M(x) = Mi - Vi*x - w*x²/2  (following Pynite convention)
         // This correctly handles the moment diagram for frames
@@ -925,7 +1018,10 @@ window.showFEABendingMomentDiagramInternal = function(plane = 'XY') {
         }
 
         // Auto-scale: use 20% of member length for max moment visualization
-        const diagramScale = (length * 0.20) / maxAbsMoment;
+        // Then apply the user-adjustable global scale factor
+        const baseScale = (length * 0.20) / maxAbsMoment;
+        const userScale = window.diagramScale || 1.0;
+        const diagramScale = baseScale * userScale;
         
         console.log(`Member ${member.name}: Mi=${(Mi/1000).toFixed(1)} kNm, Vi=${(Vi/1000).toFixed(1)} kN, Mj=${(Mj/1000).toFixed(1)} kNm, w=${w} N/m, Mmax=${(maxAbsMoment/1000).toFixed(1)} kNm`);
 
@@ -1053,12 +1149,14 @@ window.showFEABendingMomentDiagramInternal = function(plane = 'XY') {
 };
 
 // Wrapper function for XY plane (about Z-axis) - default behavior
-window.showFEABendingMomentDiagram = function(scale = 0.0001) {
+window.showFEABendingMomentDiagram = function() {
+    window.currentDiagramType = 'moment_xy';
     window.showFEABendingMomentDiagramInternal('XY');
 };
 
 // Wrapper function for XZ plane (about Y-axis)
-window.showFEABendingMomentDiagramXZ = function(scale = 0.0001) {
+window.showFEABendingMomentDiagramXZ = function() {
+    window.currentDiagramType = 'moment_xz';
     window.showFEABendingMomentDiagramInternal('XZ');
 };
 
@@ -1166,7 +1264,8 @@ window.showFEAShearForceDiagramInternal = function(plane = 'XY') {
             Vj = forces.shear_y_j;
         }
 
-        // For member with UDL: V(x) = Vi - w*x
+        // For member with UDL: V(x) = Vi + w*x
+        // (w is negative for downward loads, so shear decreases from Vi)
         const segments = 40;
         const shears = [];
         let maxAbsShear = 0.1;
@@ -1174,13 +1273,16 @@ window.showFEAShearForceDiagramInternal = function(plane = 'XY') {
         for (let i = 0; i <= segments; i++) {
             const t = i / segments;
             const x = t * length;
-            const V = Vi - w * x;
+            const V = Vi + w * x;
             shears.push(V);
             maxAbsShear = Math.max(maxAbsShear, Math.abs(V));
         }
 
         // Auto-scale: use 20% of member length for max shear visualization
-        const diagramScale = (length * 0.20) / maxAbsShear;
+        // Then apply the user-adjustable global scale factor
+        const baseScale = (length * 0.20) / maxAbsShear;
+        const userScale = window.diagramScale || 1.0;
+        const diagramScale = baseScale * userScale;
         
         console.log(`Member ${member.name}: Vi=${(Vi/1000).toFixed(1)} kN, Vj=${(Vj/1000).toFixed(1)} kN, w=${w} N/m`);
 
@@ -1273,17 +1375,20 @@ window.showFEAShearForceDiagramInternal = function(plane = 'XY') {
 };
 
 // Wrapper for XY plane shear
-window.showFEAShearForceDiagram = function(scale = 0.0005) {
+window.showFEAShearForceDiagram = function() {
+    window.currentDiagramType = 'shear';
     window.showFEAShearForceDiagramInternal('XY');
 };
 
 // Wrapper for XZ plane shear
-window.showFEAShearForceDiagramXZ = function(scale = 0.0005) {
+window.showFEAShearForceDiagramXZ = function() {
+    window.currentDiagramType = 'shear';
     window.showFEAShearForceDiagramInternal('XZ');
 };
 
 // Show axial force diagram
-window.showFEAAxialForceDiagram = function(scale = 0.0005) {
+window.showFEAAxialForceDiagram = function() {
+    window.currentDiagramType = 'axial';
     window.clearFEADiagrams();
     
     const results = window.feaResults;

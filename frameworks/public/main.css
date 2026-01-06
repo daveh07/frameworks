@@ -2138,6 +2138,124 @@ input:focus, select:focus, textarea:focus {
     font-family: var(--font-mono);
 }
 
+/* Member End Releases */
+.section-hint {
+    font-size: 10px;
+    color: #666;
+    margin-bottom: 8px;
+    font-style: italic;
+}
+
+.release-group {
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 6px;
+    padding: 10px;
+    margin-bottom: 8px;
+}
+
+.release-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.release-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #333;
+}
+
+.pin-btn {
+    padding: 4px 10px;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    background: #f0f0f0;
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.pin-btn:hover {
+    background: #e0e0e0;
+}
+
+.pin-btn.active {
+    background: #fff3e0;
+    border-color: #ff9800;
+    color: #e65100;
+}
+
+.release-checkboxes {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: #555;
+    cursor: pointer;
+}
+
+.checkbox-label input[type="checkbox"] {
+    accent-color: var(--color-primary);
+    width: 14px;
+    height: 14px;
+}
+
+/* Release Apply Button */
+.release-apply {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid #dee2e6;
+}
+
+.release-apply .apply-btn {
+    flex: 1;
+    padding: 10px 16px;
+    background: #0066cc;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.release-apply .apply-btn:hover {
+    background: #0052a3;
+}
+
+.release-apply .apply-btn.highlight {
+    background: #28a745;
+    animation: pulse-highlight 1.5s ease-in-out infinite;
+}
+
+.release-apply .apply-btn.highlight:hover {
+    background: #218838;
+}
+
+@keyframes pulse-highlight {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(40, 167, 69, 0.4); }
+    50% { box-shadow: 0 0 0 6px rgba(40, 167, 69, 0); }
+}
+
+.modified-hint {
+    font-size: 11px;
+    color: #ff9800;
+    font-style: italic;
+}
+
 /* Derived Properties (Material) */
 .derived-props {
     display: grid;

@@ -90,7 +90,7 @@ import {
 } from './analysis_diagrams.js';
 
 // Import FEA solver integration (attaches functions to window)
-import '/js/fea_integration.js';
+import './fea_integration.js';
 
 // Global scene data
 let sceneData = null;
@@ -108,10 +108,16 @@ let previousMousePosition = { x: 0, y: 0 };
 let mouseDownPos = { x: 0, y: 0 };
 let hasMoved = false;
 
+// Key state tracking for diagram scaling
+let isDKeyHeld = false;
+
+// Diagram scale state (global, used by fea_integration.js)
+window.diagramScale = 1.0;
+
 /**
  * Initialize Three.js canvas
  * @param {HTMLCanvasElement} canvas
- * @returns {Promise<void>}
+ * @returns {Promise<Object>}
  */
 export async function init_three_canvas(canvas) {
     if (!canvas) {
@@ -839,6 +845,169 @@ export async function init_three_canvas(canvas) {
         return beam;
     };
     
+    // Get releases for selected beam(s)
+    window.getSelectedBeamReleases = () => {
+        const beams = window.selectedBeams || new Set();
+        if (beams.size === 0) return null;
+        
+        // Return releases from first selected beam
+        const firstBeam = Array.from(beams)[0];
+        return firstBeam.userData.releases || {
+            i_node_ry: false,
+            i_node_rz: false,
+            j_node_ry: false,
+            j_node_rz: false
+        };
+    };
+    
+    // Create release indicators group if it doesn't exist
+    if (!sceneData.releaseIndicatorsGroup) {
+        sceneData.releaseIndicatorsGroup = new THREE.Group();
+        sceneData.releaseIndicatorsGroup.name = 'releaseIndicators';
+        sceneData.scene.add(sceneData.releaseIndicatorsGroup);
+    }
+    
+    // Global release visibility state
+    window.releaseIndicatorsVisible = true;
+    
+    // Toggle release indicators visibility
+    window.toggleReleasesVisibility = (visible) => {
+        window.releaseIndicatorsVisible = visible;
+        if (sceneData && sceneData.releaseIndicatorsGroup) {
+            sceneData.releaseIndicatorsGroup.visible = visible;
+        }
+        console.log(`Release indicators visibility: ${visible}`);
+    };
+    
+    // Create a circle geometry for pinned release indicator
+    const createPinnedReleaseIndicator = () => {
+        // Create a ring (torus) to represent pinned release (○)
+        const geometry = new THREE.TorusGeometry(0.12, 0.025, 8, 16);
+        const material = new THREE.MeshBasicMaterial({ 
+            color: 0x00ffff,  // Cyan for visibility
+            side: THREE.DoubleSide
+        });
+        return new THREE.Mesh(geometry, material);
+    };
+    
+    // Create an X shape for fixed release indicator
+    const createFixedReleaseIndicator = () => {
+        const group = new THREE.Group();
+        
+        // Create two crossed lines for X
+        const lineMaterial = new THREE.LineBasicMaterial({ 
+            color: 0xff6600,  // Orange for fixed
+            linewidth: 2
+        });
+        
+        const size = 0.1;
+        
+        // First diagonal of X
+        const points1 = [
+            new THREE.Vector3(-size, -size, 0),
+            new THREE.Vector3(size, size, 0)
+        ];
+        const geometry1 = new THREE.BufferGeometry().setFromPoints(points1);
+        const line1 = new THREE.Line(geometry1, lineMaterial);
+        group.add(line1);
+        
+        // Second diagonal of X
+        const points2 = [
+            new THREE.Vector3(-size, size, 0),
+            new THREE.Vector3(size, -size, 0)
+        ];
+        const geometry2 = new THREE.BufferGeometry().setFromPoints(points2);
+        const line2 = new THREE.Line(geometry2, lineMaterial);
+        group.add(line2);
+        
+        return group;
+    };
+    
+    // Update release indicators for a specific beam
+    const updateBeamReleaseIndicators = (beam) => {
+        if (!sceneData || !sceneData.releaseIndicatorsGroup) return;
+        
+        // Remove existing indicators for this beam
+        const toRemove = [];
+        sceneData.releaseIndicatorsGroup.children.forEach(child => {
+            if (child.userData.beamId === beam.userData.id) {
+                toRemove.push(child);
+            }
+        });
+        toRemove.forEach(child => {
+            sceneData.releaseIndicatorsGroup.remove(child);
+            child.traverse(obj => {
+                if (obj.geometry) obj.geometry.dispose();
+                if (obj.material) obj.material.dispose();
+            });
+        });
+        
+        const releases = beam.userData.releases || {};
+        const iNodeReleased = releases.i_node_ry || releases.i_node_rz;
+        const jNodeReleased = releases.j_node_ry || releases.j_node_rz;
+        
+        // Get beam endpoints
+        const positions = beam.geometry.attributes.position;
+        const iNode = new THREE.Vector3(positions.getX(0), positions.getY(0), positions.getZ(0));
+        const jNode = new THREE.Vector3(positions.getX(1), positions.getY(1), positions.getZ(1));
+        
+        // Calculate beam direction for offset
+        const beamDir = new THREE.Vector3().subVectors(jNode, iNode).normalize();
+        const offsetDistance = 0.25; // Offset from node along beam
+        
+        // Create i-node indicator (circle for pinned/released)
+        if (iNodeReleased) {
+            const indicator = createPinnedReleaseIndicator();
+            indicator.position.copy(iNode).addScaledVector(beamDir, offsetDistance);
+            // Orient circle perpendicular to beam
+            indicator.lookAt(indicator.position.clone().add(beamDir));
+            indicator.userData.beamId = beam.userData.id;
+            indicator.userData.nodeEnd = 'i';
+            sceneData.releaseIndicatorsGroup.add(indicator);
+        }
+        
+        // Create j-node indicator
+        if (jNodeReleased) {
+            const indicator = createPinnedReleaseIndicator();
+            indicator.position.copy(jNode).addScaledVector(beamDir, -offsetDistance);
+            // Orient circle perpendicular to beam
+            indicator.lookAt(indicator.position.clone().add(beamDir));
+            indicator.userData.beamId = beam.userData.id;
+            indicator.userData.nodeEnd = 'j';
+            sceneData.releaseIndicatorsGroup.add(indicator);
+        }
+    };
+    
+    // Update all beam release indicators
+    window.updateAllReleaseIndicators = () => {
+        if (!sceneData || !sceneData.beamsGroup) return;
+        
+        sceneData.beamsGroup.children.forEach(beam => {
+            updateBeamReleaseIndicators(beam);
+        });
+    };
+    
+    // Set releases for selected beam(s) - MUST BE AFTER updateBeamReleaseIndicators
+    window.setSelectedBeamReleases = (releases) => {
+        const beams = window.selectedBeams || new Set();
+        if (beams.size === 0) return;
+        
+        // Validate and normalize the releases object
+        const validReleases = {
+            i_node_ry: !!(releases && releases.i_node_ry),
+            i_node_rz: !!(releases && releases.i_node_rz),
+            j_node_ry: !!(releases && releases.j_node_ry),
+            j_node_rz: !!(releases && releases.j_node_rz)
+        };
+        
+        beams.forEach(beam => {
+            beam.userData.releases = { ...validReleases };
+            // Update release indicators for this beam
+            updateBeamReleaseIndicators(beam);
+        });
+        console.log(`Updated releases for ${beams.size} beam(s):`, validReleases);
+    };
+    
     window.createConstraintSymbol = (node, constraintType) => {
         if (!sceneData || !sceneData.scene) {
             console.error('Scene not initialized');
@@ -954,6 +1123,9 @@ export async function init_three_canvas(canvas) {
     updateCursor();
 
     console.log('Three.js canvas initialized');
+    
+    // Return success for WASM Promise
+    return { success: true };
 }
 
 /**
@@ -968,13 +1140,19 @@ function setupEventListeners(canvas) {
     canvas.addEventListener('wheel', onWheel, { passive: false });
     canvas.addEventListener('contextmenu', onContextMenu);
     document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('keyup', onKeyUp);
 }
 
 /**
- * Keyboard handler
+ * Keyboard down handler
  * @param {KeyboardEvent} e
  */
 function onKeyDown(e) {
+    // Track D key for diagram scaling
+    if (e.key.toLowerCase() === 'd' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        isDKeyHeld = true;
+    }
+    
     // Undo: Ctrl+Z
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault();
@@ -995,6 +1173,16 @@ function onKeyDown(e) {
         } else if (e.key === 'Escape') {
             cancelPlateDrawing(sceneData.scene);
         }
+    }
+}
+
+/**
+ * Keyboard up handler
+ * @param {KeyboardEvent} e
+ */
+function onKeyUp(e) {
+    if (e.key.toLowerCase() === 'd') {
+        isDKeyHeld = false;
     }
 }
 
@@ -1202,6 +1390,27 @@ function onContextMenu(e) {
  */
 function onWheel(e) {
     e.preventDefault();
+    
+    // D + Scroll: Scale force diagrams
+    if (isDKeyHeld) {
+        const scaleDelta = e.deltaY > 0 ? 0.9 : 1.1; // Scroll down = smaller, up = larger
+        window.diagramScale = Math.max(0.1, Math.min(10, window.diagramScale * scaleDelta));
+        
+        // Refresh the current diagram if one is displayed
+        if (window.currentDiagramType) {
+            window.refreshCurrentDiagram();
+        }
+        
+        // Notify Rust of scale change for UI update
+        if (window.onDiagramScaleChange) {
+            window.onDiagramScaleChange(window.diagramScale);
+        }
+        
+        console.log(`Diagram scale: ${window.diagramScale.toFixed(2)}x`);
+        return;
+    }
+    
+    // Normal zoom
     const zoomSpeed = 0.02;
     const delta = e.deltaY * zoomSpeed;
     cameraControls.spherical.radius = Math.max(1, Math.min(200, cameraControls.spherical.radius + delta));
@@ -1614,4 +1823,10 @@ export function cleanupCanvas() {
     if (sceneData && sceneData.renderer) {
         sceneData.renderer.dispose();
     }
+}
+
+// Expose init_three_canvas globally for WASM to call
+if (typeof window !== 'undefined') {
+    window.init_three_canvas = init_three_canvas;
+    window.cleanupCanvas = cleanupCanvas;
 }
