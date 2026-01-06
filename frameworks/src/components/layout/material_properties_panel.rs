@@ -10,12 +10,7 @@ pub struct MaterialProperties {
 
 impl Default for MaterialProperties {
     fn default() -> Self {
-        Self {
-            name: "Structural Steel".to_string(),
-            elastic_modulus: 210.0,  // GPa
-            poisson_ratio: 0.3,
-            density: 7850.0,  // kg/m³
-        }
+        Self::concrete()
     }
 }
 
@@ -31,8 +26,10 @@ impl MaterialProperties {
     
     pub fn concrete() -> Self {
         Self {
-            name: "Concrete C30".to_string(),
-            elastic_modulus: 30.0,
+            // Concrete ~32 MPa (typical). E is an approximate value.
+            // Using ACI-style estimate: Ec ≈ 4700 * sqrt(fc') MPa.
+            name: "Concrete 32 MPa".to_string(),
+            elastic_modulus: 26.6,
             poisson_ratio: 0.2,
             density: 2400.0,
         }
@@ -62,7 +59,20 @@ pub fn MaterialPropertiesPanel(
     show: Signal<bool>,
     properties: Signal<MaterialProperties>,
 ) -> Element {
-    let mut material_type = use_signal(|| "steel".to_string());
+    let mut material_type = use_signal(|| {
+        let name = properties().name.to_lowercase();
+        if name.contains("concrete") {
+            "concrete".to_string()
+        } else if name.contains("aluminum") {
+            "aluminum".to_string()
+        } else if name.contains("timber") {
+            "timber".to_string()
+        } else if name.contains("custom") {
+            "custom".to_string()
+        } else {
+            "steel".to_string()
+        }
+    });
     let mut elastic_modulus = use_signal(|| properties().elastic_modulus);
     let mut poisson_ratio = use_signal(|| properties().poisson_ratio);
     let mut density = use_signal(|| properties().density);
@@ -71,7 +81,7 @@ pub fn MaterialPropertiesPanel(
     // Update parent properties when values change
     use_effect(move || {
         let name = match material_type().as_str() {
-            "concrete" => "Concrete",
+            "concrete" => "Concrete 32 MPa",
             "aluminum" => "Aluminum",
             "timber" => "Timber",
             "custom" => "Custom Material",

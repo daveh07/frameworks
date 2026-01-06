@@ -486,7 +486,11 @@ export async function init_three_canvas(canvas) {
      * Create rectangular beam geometry
      */
     function createRectangularBeamGeometry(length, height, width) {
-        return new THREE.BoxGeometry(width, length, height);
+        // Beam axis is local Y (aligned to the member direction).
+        // For consistency with analysis conventions, treat `height` as section depth (vertical)
+        // and `width` as the lateral breadth. In our rendering orientation, local X maps to
+        // global vertical for common member directions, so put depth on X and breadth on Z.
+        return new THREE.BoxGeometry(height, length, width);
     }
     
     /**
@@ -531,6 +535,10 @@ export async function init_three_canvas(canvas) {
         geometry.translate(0, -length / 2, 0);
         // Rotate so Y is along beam axis
         geometry.rotateX(Math.PI / 2);
+
+        // Match the same convention as rectangular beams: section depth (height) should be
+        // aligned with local X and flange width with local Z.
+        geometry.rotateY(Math.PI / 2);
         
         return geometry;
     }

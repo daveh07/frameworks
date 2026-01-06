@@ -112,37 +112,6 @@ pub fn AnalysisPanel(
             
             // Content
             div { class: "panel-content",
-                // Model Properties
-                div { class: "analysis-section",
-                    div { class: "section-title", "Model Properties" }
-                    div { class: "properties-grid",
-                        div { class: "prop-item",
-                            span { class: "prop-label", "Material" }
-                            span { class: "prop-value", "{material_props().name}" }
-                        }
-                        div { class: "prop-item",
-                            span { class: "prop-label", "Elastic Modulus" }
-                            span { class: "prop-value", "{material_props().elastic_modulus} GPa" }
-                        }
-                        div { class: "prop-item",
-                            span { class: "prop-label", "Poisson Ratio" }
-                            span { class: "prop-value", "{material_props().poisson_ratio:.3}" }
-                        }
-                        div { class: "prop-item",
-                            span { class: "prop-label", "Beam Section" }
-                            span { class: "prop-value", "{beam_props().section_type}" }
-                        }
-                        div { class: "prop-item",
-                            span { class: "prop-label", "Section Size" }
-                            span { class: "prop-value", "{beam_props().width*1000.0:.0} × {beam_props().height*1000.0:.0} mm" }
-                        }
-                        div { class: "prop-item",
-                            span { class: "prop-label", "Shell Thickness" }
-                            span { class: "prop-value", "{shell_props().thickness*1000.0:.0} mm" }
-                        }
-                    }
-                }
-
                 // Solver Settings
                 div { class: "analysis-section",
                     div { class: "section-title", "Solver Settings" }

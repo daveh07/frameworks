@@ -1,5 +1,74 @@
 //SCENE.JS
 
+// Dioxus web logging can forward console arguments to Rust using a strict
+// string-only schema. Ensure console methods receive a single string.
+(function sanitizeConsoleArgs() {
+    if (typeof console === 'undefined') return;
+    if (console.__frameworks_stringify_patched) return;
+
+    function safeToString(value) {
+        if (value === null) return 'null';
+        if (value === undefined) return 'undefined';
+
+        const t = typeof value;
+        if (t === 'string') return value;
+        if (t === 'number' || t === 'boolean' || t === 'bigint') return String(value);
+        if (t === 'symbol') return value.toString();
+        if (t === 'function') return `[Function${value.name ? `: ${value.name}` : ''}]`;
+
+        // Errors: keep useful info.
+        if (value instanceof Error) {
+            return value.stack || `${value.name}: ${value.message}`;
+        }
+
+        // Objects: try JSON, fall back to default stringification.
+        try {
+            const seen = new WeakSet();
+            return JSON.stringify(value, (key, val) => {
+                if (typeof val === 'object' && val !== null) {
+                    if (seen.has(val)) return '[Circular]';
+                    seen.add(val);
+                }
+                if (typeof val === 'bigint') return val.toString();
+                if (typeof val === 'function') return `[Function${val.name ? `: ${val.name}` : ''}]`;
+                if (typeof val === 'symbol') return val.toString();
+                return val;
+            });
+        } catch {
+            try {
+                return String(value);
+            } catch {
+                return '[Unstringifiable]';
+            }
+        }
+    }
+
+    function wrap(methodName) {
+        const original = console[methodName];
+        if (typeof original !== 'function') return;
+        console[methodName] = function (...args) {
+            // Keep semantics: one string argument.
+            const msg = args.map(safeToString).join(' ');
+            return original.call(console, msg);
+        };
+    }
+
+    wrap('log');
+    wrap('info');
+    wrap('warn');
+    wrap('error');
+
+    // Re-apply once after current tick in case another layer wraps console.
+    setTimeout(() => {
+        wrap('log');
+        wrap('info');
+        wrap('warn');
+        wrap('error');
+    }, 0);
+
+    console.__frameworks_stringify_patched = true;
+})();
+
 // Central analysis results hub to prevent competing global overrides
 (function initAnalysisResultsHub() {
     if (window.__analysisResultsHubInitialized) {
