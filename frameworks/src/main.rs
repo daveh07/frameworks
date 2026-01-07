@@ -19,7 +19,7 @@ enum Route {
     Dashboard {},
 }
 
-const MAIN_CSS: Asset = asset!("/assets/main.css");
+const MAIN_CSS: &str = "/main.css";
 
 // Inline JavaScript - combining scene and moment diagram scripts
 static VIEWPORT_SCRIPTS: &str = include_str!("viewport_combined.js");

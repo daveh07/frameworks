@@ -3,7 +3,7 @@
  * Handles node and beam creation, selection, and deletion
  */
 
-const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js');
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js';
 import { addNodeSelectionHighlight, removeNodeSelectionHighlight, clearSelectionHighlights } from './scene_setup.js';
 import { removeConstraintSymbol } from './constraints_manager.js';
 import { updateNodeLabels, updateBeamLabels, updatePlateLabels } from './labels_manager.js';

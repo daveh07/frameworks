@@ -3,7 +3,7 @@
  * Exports scene geometry (nodes and beams) to Rust-compatible format
  */
 
-const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js');
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js';
 import { selectedNodes, selectedBeams } from './geometry_manager.js';
 import { beamLoads, plateLoads } from './loads_manager.js';
 

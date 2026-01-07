@@ -3,7 +3,7 @@
  * Manages mouse events, interaction modes, and user input
  */
 
-const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js');
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js';
 import { selectedNodes, selectedBeams, selectedPlates, selectedElements, createNode, createBeam, createPlateMesh, findBeamBetweenPositions } from './geometry_manager.js';
 import { addNodeSelectionHighlight, removeNodeSelectionHighlight } from './scene_setup.js';
 

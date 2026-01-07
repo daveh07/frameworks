@@ -1,5 +1,5 @@
 // loads_manager.js - Manage structural loads on beams
-const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js');
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js';
 
 // Get selectedBeams from global (set by three_canvas.js) to avoid module instance issues
 function getSelectedBeams() {

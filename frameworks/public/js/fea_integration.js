@@ -1,7 +1,7 @@
 // FEA Solver Integration - Extract structure data and visualize results
 
 // Import THREE.js
-const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js');
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js';
 
 // ========================
 // Diagram Scale and State
@@ -172,7 +172,7 @@ window.extractFEAStructure = function(materialConfig, beamSectionConfig) {
                 
                 // Calculate member rotation angle
                 // For horizontal beams: local y-axis should point up (global Y)
-                // For vertical members: default orientation works
+                // For vertical columns: need to rotate section to align strong axis with XY bending
                 let rotation = 0;
                 if (iNode && jNode) {
                     const dx = jNode.x - iNode.x;
@@ -183,11 +183,16 @@ window.extractFEAStructure = function(materialConfig, beamSectionConfig) {
                     // Check if member is vertical (dy is dominant)
                     const isVertical = Math.abs(dy) > 0.9 * length;
                     
-                    if (!isVertical) {
+                    if (isVertical) {
+                        // Vertical column - rotate 90° to align strong axis (Iz) with XY plane bending
+                        // Default local axes for vertical member: y=globalZ, z=globalX
+                        // This means Iy resists XY bending (wrong for rectangular sections)
+                        // Rotating 90° swaps the axes so Iz resists XY bending (correct)
+                        rotation = Math.PI / 2;
+                    } else {
                         // Horizontal beam - no rotation needed, default puts strong axis vertical
                         rotation = 0;
                     }
-                    // For vertical columns, rotation doesn't matter for symmetric sections
                 }
                 
                 // Get member releases from userData (default: all fixed)
@@ -934,52 +939,37 @@ window.showFEABendingMomentDiagramInternal = function(plane = 'XY') {
         // End moments and shear from FEA
         // The moment/shear to display depends on member orientation AND view plane
         // 
-        // LOCAL AXIS CONVENTIONS:
+        // LOCAL AXIS CONVENTIONS (after applying rotation for vertical columns):
         // 
-        // PYNITE convention (what users expect):
+        // With the 90° rotation applied to vertical columns to align strong axis:
         // - Horizontal beams: local y = vertical (global Y), local z = horizontal
-        // - Vertical columns: local y = global -X, local z = global +Z
-        //   So Mz (about global Z) = XY frame bending, My (about global -X) = YZ frame bending
+        // - Vertical columns: local y = -global X, local z = global Z
+        //   (After rotation, the strong axis Iz now resists XY plane bending correctly)
         //
-        // RUST SOLVER convention (what we compute):
-        // - Horizontal beams: local y = vertical (global Y), local z = horizontal (same as Pynite)
-        // - Vertical columns: local y = global +Z, local z = global +X (swapped from Pynite!)
-        //   So Mz (about global X) = YZ frame bending, My (about global Z) = XY frame bending
+        // For XY plane bending (what the "Mz (Vertical)" button shows):
+        // - Horizontal beams: use moment_z (moment about local z)
+        // - Vertical columns: use moment_z (moment about local z = global Z = XY plane bending)
         //
-        // To show PYNITE-compatible diagrams with our Rust solver results:
-        // - For horizontal beams: Mz/My map directly (same convention)
-        // - For columns: We need to swap My<->Mz to match Pynite's visual interpretation
-        //
-        // "Mz (Vertical)" button shows:
-        //   - Beams: moment_z (vertical bending) 
-        //   - Columns: moment_z (which in our solver = Pynite's moment_y = YZ frame bending)
-        //   CORRECTION: For columns, use moment_y to show XY frame bending (like Pynite Mz)
-        //
-        // "My (Lateral)" button shows:
-        //   - Beams: moment_y (horizontal bending)
-        //   - Columns: moment_y (which in our solver = Pynite's moment_z = XY frame bending)
-        //   CORRECTION: For columns, use moment_z to show YZ frame bending (like Pynite My)
+        // For XZ plane bending (what the "My (Lateral)" button shows):
+        // - Horizontal beams: use moment_y (moment about local y)
+        // - Vertical columns: use moment_y (moment about local y = -global X = XZ plane bending)
         //
         let Mi, Vi, Mj;
         if (isVertical) {
-            // Column: Our Rust solver has y=globalZ, z=globalX
-            // But Pynite has y=global-X, z=globalZ
-            // To match Pynite visuals, we swap:
-            // - "Mz view" (XY frame) → use our moment_y (since our y is what Pynite calls z)
-            // - "My view" (YZ frame) → use our moment_z (since our z is what Pynite calls y)
+            // Column with 90° rotation applied: local y = -globalX, local z = globalZ
             if (isXY) {
-                // Mz view: show XY frame bending - use moment_y from our solver
-                Mi = forces.moment_y_i;
-                Vi = forces.shear_z_i;
-                Mj = forces.moment_y_j;
-            } else {
-                // My view: show YZ frame bending - use moment_z from our solver
+                // Mz view: show XY frame bending - use moment_z (about global Z)
                 Mi = forces.moment_z_i;
                 Vi = forces.shear_y_i;
                 Mj = forces.moment_z_j;
+            } else {
+                // My view: show XZ frame bending - use moment_y (about global -X)
+                Mi = forces.moment_y_i;
+                Vi = forces.shear_z_i;
+                Mj = forces.moment_y_j;
             }
         } else {
-            // Horizontal beam: conventions match between Rust solver and Pynite
+            // Horizontal beam: no rotation applied
             if (isXY) {
                 // Mz view: vertical bending (moment_z)
                 Mi = forces.moment_z_i;

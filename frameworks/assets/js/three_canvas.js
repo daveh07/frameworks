@@ -3,7 +3,7 @@
  * Orchestrates scene initialization, camera controls, and user interactions
  */
 
-const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js');
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js';
 
 // Import modules
 import { initializeScene, initializeCameraControls, setViewportView } from './scene_setup.js';

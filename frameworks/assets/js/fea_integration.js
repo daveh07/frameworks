@@ -1,7 +1,7 @@
 // FEA Solver Integration - Extract structure data and visualize results
 
 // Import THREE.js
-const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js');
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js';
 
 // ========================
 // Diagram Scale and State

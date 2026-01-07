@@ -3,7 +3,7 @@
  * Handles creation and visibility of ID labels for nodes, beams, and plates
  */
 
-const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js');
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js';
 
 let labelsGroup = null;
 let nodeLabelsGroup = null;
