@@ -172,7 +172,7 @@ window.extractFEAStructure = function(materialConfig, beamSectionConfig) {
                 
                 // Calculate member rotation angle
                 // For horizontal beams: local y-axis should point up (global Y)
-                // For vertical members: default orientation works
+                // For vertical columns: need to rotate section to align strong axis with XY bending
                 let rotation = 0;
                 if (iNode && jNode) {
                     const dx = jNode.x - iNode.x;
@@ -183,11 +183,16 @@ window.extractFEAStructure = function(materialConfig, beamSectionConfig) {
                     // Check if member is vertical (dy is dominant)
                     const isVertical = Math.abs(dy) > 0.9 * length;
                     
-                    if (!isVertical) {
+                    if (isVertical) {
+                        // Vertical column - rotate 90° to align strong axis (Iz) with XY plane bending
+                        // Default local axes for vertical member: y=globalZ, z=globalX
+                        // This means Iy resists XY bending (wrong for rectangular sections)
+                        // Rotating 90° swaps the axes so Iz resists XY bending (correct)
+                        rotation = Math.PI / 2;
+                    } else {
                         // Horizontal beam - no rotation needed, default puts strong axis vertical
                         rotation = 0;
                     }
-                    // For vertical columns, rotation doesn't matter for symmetric sections
                 }
                 
                 // Get member releases from userData (default: all fixed)
@@ -844,7 +849,10 @@ window.showFEABendingMomentDiagramInternal = function(plane = 'XY') {
         );
     });
     // Tolerance: 1% of max moment (or 10 N·m minimum to avoid div by zero issues)
-    const momentTolerance = Math.max(globalMaxMoment * 0.01, 10);
+    // Tolerance is used only to suppress numerical noise.
+    // IMPORTANT: Do not use a large absolute floor here, because solver units may be kN·m
+    // (e.g. ~9.41) and a floor like 10 would hide real diagrams.
+    const momentTolerance = Math.max(globalMaxMoment * 1e-4, 1e-6);
     console.log(`Global max moment: ${(globalMaxMoment/1000).toFixed(2)} kNm, tolerance: ${(momentTolerance/1000).toFixed(3)} kNm`);
 
     // Colors for moment diagram
@@ -852,10 +860,60 @@ window.showFEABendingMomentDiagramInternal = function(plane = 'XY') {
     // Hogging = negative moment = tension at top fiber = red
     const saggingColor = 0x0066ff;  // Blue for sagging moments (midspan of loaded beams)
     const hoggingColor = 0xff0000;  // Red for hogging moments (at supports/columns)
+    const columnColor = 0x0066ff;   // Blue for all column moments
+
+    // Reconstruct the solver's local axes (same logic as fea-solver/src/math.rs::member_transformation_matrix)
+    // and apply member rotation about local x.
+    function computeMemberLocalAxes(iPos, jPos, rotationRad) {
+        const dx = jPos.x - iPos.x;
+        const dy = jPos.y - iPos.y;
+        const dz = jPos.z - iPos.z;
+
+        const L = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (L < 1e-10) {
+            throw new Error('Member has zero length');
+        }
+
+        const xAxis = new THREE.Vector3(dx / L, dy / L, dz / L);
+        const eps = 1e-10;
+
+        let yAxis;
+        let zAxis;
+
+        // Vertical member: x approx parallel to global Y
+        if (Math.abs(xAxis.x) < eps && Math.abs(xAxis.z) < eps) {
+            // Match solver: y is +/- global Z depending on direction, z is global X
+            yAxis = new THREE.Vector3(0, 0, xAxis.y > 0 ? 1 : -1);
+            zAxis = new THREE.Vector3(1, 0, 0);
+        } else {
+            // Non-vertical member: z = x cross globalY (normalized), y = z cross x
+            const globalY = new THREE.Vector3(0, 1, 0);
+            zAxis = new THREE.Vector3().crossVectors(xAxis, globalY);
+            const zLen = zAxis.length();
+            if (zLen < eps) {
+                throw new Error('Cannot construct member local axes');
+            }
+            zAxis.divideScalar(zLen);
+            yAxis = new THREE.Vector3().crossVectors(zAxis, xAxis);
+        }
+
+        // Apply member rotation about local x-axis
+        if (Math.abs(rotationRad) > 1e-10) {
+            const cosR = Math.cos(rotationRad);
+            const sinR = Math.sin(rotationRad);
+            const y0 = yAxis.clone();
+            const z0 = zAxis.clone();
+            yAxis = y0.multiplyScalar(cosR).add(z0.clone().multiplyScalar(sinR));
+            zAxis = y0.multiplyScalar(-sinR).add(z0.multiplyScalar(cosR));
+        }
+
+        return { xAxis, yAxis, zAxis, length: L };
+    }
 
     // Helper to get perpendicular direction for diagram offset based on plane
     // The perpendicular determines which direction the moment diagram "bulges"
-    function getPerpendicular(memberDir, isXYPlane) {
+    // For columns, we need to determine the "outward" direction based on frame geometry
+    function getPerpendicular(memberDir, isXYPlane, memberMidpoint, frameCentroid, minX, maxX, minZ, maxZ) {
         const up = new THREE.Vector3(0, 1, 0);
         const xAxis = new THREE.Vector3(1, 0, 0);
         const zAxis = new THREE.Vector3(0, 0, 1);
@@ -865,28 +923,73 @@ window.showFEABendingMomentDiagramInternal = function(plane = 'XY') {
         
         if (isVertical) {
             // Vertical member (column)
+            // Determine outward direction based on which edge the column is at
+            const edgeTol = 0.1;
             if (isXYPlane) {
-                // XY plane: diagram offset in X direction (view from Z looking at -Z)
-                return xAxis.clone();
+                // XY plane: diagram offset in X direction
+                // Check if at min or max X edge
+                if (Math.abs(memberMidpoint.x - minX) < edgeTol) {
+                    // Column at left edge - outward is -X
+                    return xAxis.clone().multiplyScalar(-1);
+                } else if (Math.abs(memberMidpoint.x - maxX) < edgeTol) {
+                    // Column at right edge - outward is +X
+                    return xAxis.clone().multiplyScalar(1);
+                } else {
+                    // Middle column - use centroid comparison
+                    const outwardX = memberMidpoint.x - frameCentroid.x;
+                    return xAxis.clone().multiplyScalar(outwardX >= 0 ? 1 : -1);
+                }
             } else {
-                // XZ plane: diagram offset in Z direction (view from X looking at -X)
-                return zAxis.clone();
+                // XZ plane: diagram offset in Z direction
+                // Check if at min or max Z edge
+                if (Math.abs(memberMidpoint.z - minZ) < edgeTol) {
+                    // Column at back edge - outward is -Z (more negative)
+                    return zAxis.clone().multiplyScalar(-1);
+                } else if (Math.abs(memberMidpoint.z - maxZ) < edgeTol) {
+                    // Column at front edge - outward is +Z (more positive)
+                    return zAxis.clone().multiplyScalar(1);
+                } else {
+                    // Middle column - use centroid comparison
+                    const outwardZ = memberMidpoint.z - frameCentroid.z;
+                    return zAxis.clone().multiplyScalar(outwardZ >= 0 ? 1 : -1);
+                }
             }
         } else {
-            // Horizontal beam
+            // Horizontal beam - unchanged from before
             if (isXYPlane) {
                 // XY plane (Mz bending): diagram should bulge in Y direction (vertical)
-                // This shows bending in the vertical plane
                 return up.clone();
             } else {
                 // XZ plane (My bending): diagram should bulge in Y direction too
-                // But for Z-spanning beams viewed from side, we want vertical offset
                 return up.clone();
             }
         }
     }
 
     let diagramsCreated = 0;
+    
+    // Calculate frame centroid for determining outward direction of columns
+    const frameCentroid = new THREE.Vector3(0, 0, 0);
+    let nodeCount = 0;
+    nodePos.forEach((pos) => {
+        frameCentroid.add(pos);
+        nodeCount++;
+    });
+    if (nodeCount > 0) {
+        frameCentroid.divideScalar(nodeCount);
+    }
+    console.log(`Frame centroid: (${frameCentroid.x.toFixed(2)}, ${frameCentroid.y.toFixed(2)}, ${frameCentroid.z.toFixed(2)})`);
+    
+    // Find frame bounds to identify edge vs middle columns
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+    nodePos.forEach((pos) => {
+        minX = Math.min(minX, pos.x);
+        maxX = Math.max(maxX, pos.x);
+        minZ = Math.min(minZ, pos.z);
+        maxZ = Math.max(maxZ, pos.z);
+    });
+    const edgeTolerance = 0.1; // Tolerance for determining if column is at edge
+    console.log(`Frame bounds: X=[${minX}, ${maxX}], Z=[${minZ}, ${maxZ}]`);
     
     model.members.forEach((member, idx) => {
         console.log(`Processing member ${idx + 1}/${model.members.length}: ${member.name}`);
@@ -914,12 +1017,41 @@ window.showFEABendingMomentDiagramInternal = function(plane = 'XY') {
             const isAlongX = !isVertical && Math.abs(memberDir.x) > 0.7;
             const isAlongZ = !isVertical && Math.abs(memberDir.z) > 0.7;
             
-            // Show ALL members in both views - the moment component selection handles
-            // which bending is displayed (vertical vs horizontal)
-            console.log(`Member ${member.name}: isVertical=${isVertical}, isAlongX=${isAlongX}, isAlongZ=${isAlongZ}, showing in ${plane} view`);
+            // Calculate member midpoint
+            const memberMidpoint = new THREE.Vector3().lerpVectors(iPos, jPos, 0.5);
+            
+            // Check if column is at edge of frame
+            const isAtMinX = Math.abs(memberMidpoint.x - minX) < edgeTolerance;
+            const isAtMaxX = Math.abs(memberMidpoint.x - maxX) < edgeTolerance;
+            const isAtMinZ = Math.abs(memberMidpoint.z - minZ) < edgeTolerance;
+            const isAtMaxZ = Math.abs(memberMidpoint.z - maxZ) < edgeTolerance;
+            const isEdgeColumnX = isAtMinX || isAtMaxX;
+            const isEdgeColumnZ = isAtMinZ || isAtMaxZ;
+            
+            // Filter members based on view:
+            // - XY (Mz) view: show columns that participate in the XY frames (edge columns in X).
+            // - XZ (My) view: show ONLY corner columns (edge in X and edge in Z).
+            if (isXY) {
+                if (isVertical && !isEdgeColumnX) {
+                    console.log(`Member ${member.name}: skipping middle-X column in Mz view`);
+                    return;
+                }
+            } else {
+                // My view: only corner columns (matches SpaceGASS symmetric behavior)
+                if (!isVertical) {
+                    console.log(`Member ${member.name}: skipping beam in My view`);
+                    return;
+                }
+                if (!(isEdgeColumnX && isEdgeColumnZ)) {
+                    console.log(`Member ${member.name}: skipping non-corner column in My view`);
+                    return;
+                }
+            }
+            
+            console.log(`Member ${member.name}: isVertical=${isVertical}, isAlongX=${isAlongX}, isAlongZ=${isAlongZ}, edgeX=${isEdgeColumnX}, edgeZ=${isEdgeColumnZ}, showing in ${plane} view`);
 
             // Get perpendicular direction for diagram offset based on plane and member orientation
-            const perpDir = getPerpendicular(memberDir, isXY);
+            const perpDir = getPerpendicular(memberDir, isXY, memberMidpoint, frameCentroid, minX, maxX, minZ, maxZ);
 
             // Get distributed load on this member
             const loads = distLoadsMap.get(member.name) || [];
@@ -934,63 +1066,89 @@ window.showFEABendingMomentDiagramInternal = function(plane = 'XY') {
         // End moments and shear from FEA
         // The moment/shear to display depends on member orientation AND view plane
         // 
-        // LOCAL AXIS CONVENTIONS:
+        // LOCAL AXIS CONVENTIONS (PyNite):
         // 
-        // PYNITE convention (what users expect):
-        // - Horizontal beams: local y = vertical (global Y), local z = horizontal
-        // - Vertical columns: local y = global -X, local z = global +Z
-        //   So Mz (about global Z) = XY frame bending, My (about global -X) = YZ frame bending
+        // For VERTICAL members (along Y):
+        //   If pointing up: local y = [-1, 0, 0] (global -X), local z = [0, 0, 1] (global +Z)
+        //   With 90° rotation: local y rotates, local z stays in XZ plane
         //
-        // RUST SOLVER convention (what we compute):
-        // - Horizontal beams: local y = vertical (global Y), local z = horizontal (same as Pynite)
-        // - Vertical columns: local y = global +Z, local z = global +X (swapped from Pynite!)
-        //   So Mz (about global X) = YZ frame bending, My (about global Z) = XY frame bending
+        // For HORIZONTAL members along X:
+        //   local x = [1, 0, 0], local y = [0, 1, 0] (global Y), local z = [0, 0, -1] (global -Z)
+        //   Mz = moment about local z = bending in XY plane (vertical bending from gravity)
         //
-        // To show PYNITE-compatible diagrams with our Rust solver results:
-        // - For horizontal beams: Mz/My map directly (same convention)
-        // - For columns: We need to swap My<->Mz to match Pynite's visual interpretation
+        // For HORIZONTAL members along Z:
+        //   local x = [0, 0, 1], local y = [0, 1, 0] (global Y), local z = [-1, 0, 0] (global -X)  
+        //   Mz = moment about local z = bending about -X = bending in YZ plane (vertical bending from gravity)
         //
-        // "Mz (Vertical)" button shows:
-        //   - Beams: moment_z (vertical bending) 
-        //   - Columns: moment_z (which in our solver = Pynite's moment_y = YZ frame bending)
-        //   CORRECTION: For columns, use moment_y to show XY frame bending (like Pynite Mz)
+        // So Mz is ALWAYS the gravity-induced vertical bending for horizontal beams!
+        // My is the lateral/horizontal plane bending.
+        // Moment component selection (matches PyNite local-axis rules + our 90° column rotation):
+        // - We rotate VERTICAL columns 90° about their local x-axis (global Y) to align section strong axis.
+        //   That rotation swaps the column local y/z directions:
+        //     before rot:  local y = -X, local z = +Z
+        //     after  rot:  local y = +Z, local z = +X
+        //   So:
+        //     - Bending about GLOBAL Z (XY-frame bending) => column moment_y
+        //     - Bending about GLOBAL X (out-of-plane / long-direction) => column moment_z
         //
-        // "My (Lateral)" button shows:
-        //   - Beams: moment_y (horizontal bending)
-        //   - Columns: moment_y (which in our solver = Pynite's moment_z = XY frame bending)
-        //   CORRECTION: For columns, use moment_z to show YZ frame bending (like Pynite My)
-        //
+        // View mapping:
+        // - Mz view (XY plane): show XY-frame bending
+        //   - Columns: use moment_y / shear_z
+        //   - Beams:   use moment_z / shear_y
+        // - My view (XZ plane): show out-of-plane bending of columns
+        //   - Columns: use moment_z / shear_y
+        //   - Beams:   not shown (filtered above)
         let Mi, Vi, Mj;
+
+        // IMPORTANT: match the solver's actual local-axis convention.
+        // See fea-solver/src/math.rs::member_transformation_matrix.
+        //
+        // For vertical members, the solver constructs local axes so that:
+        // - local x is along the member (i -> j)
+        // - for vertical members: y is ±global Z, z is global X BEFORE rotation
+        // - then we apply member.rotation about local x
+        //
+        // With our 90° column rotation (rotation = +pi/2), vertical columns end up with:
+        // - local y ≈ global +X
+        // - local z ≈ ±global Z (sign depends on whether the member points up or down)
+        //
+        // Therefore:
+        // - XY ("Mz") view (frame bending in X): use local moment_z, but correct its sign so
+        //   that it represents a consistent global-Z bending sense regardless of i/j ordering.
+        // - XZ ("My") view (long-direction column bending): use local moment_y.
         if (isVertical) {
-            // Column: Our Rust solver has y=globalZ, z=globalX
-            // But Pynite has y=global-X, z=globalZ
-            // To match Pynite visuals, we swap:
-            // - "Mz view" (XY frame) → use our moment_y (since our y is what Pynite calls z)
-            // - "My view" (YZ frame) → use our moment_z (since our z is what Pynite calls y)
+            // For columns (vertical members), we need to pick the correct local moment component
+            // based on which global plane we're viewing.
+            //
+            // Our solver convention (after 90° rotation for columns):
+            //   - moment_z = bending in the XY plane (frame plane, about global Z axis)
+            //   - moment_y = bending in the XZ plane (out-of-plane, about global X axis)
+            //
+            // XY view (Mz): show moment_z (frame-plane bending)
+            // XZ view (My): show moment_y (out-of-plane bending)
+            
             if (isXY) {
-                // Mz view: show XY frame bending - use moment_y from our solver
+                // Mz view: use moment_y for XY-plane bending
                 Mi = forces.moment_y_i;
-                Vi = forces.shear_z_i;
                 Mj = forces.moment_y_j;
             } else {
-                // My view: show YZ frame bending - use moment_z from our solver
+                // My view: use moment_z for XZ-plane bending
                 Mi = forces.moment_z_i;
-                Vi = forces.shear_y_i;
                 Mj = forces.moment_z_j;
             }
+
+            // No sign correction - using raw moment values
+
+            // Columns have no distributed load; enforce linear moment variation.
+            Vi = (Mi - Mj) / length;
+            
+            console.log(`Column ${member.name}: atMinX=${isAtMinX}, atMaxX=${isAtMaxX}, atMinZ=${isAtMinZ}, atMaxZ=${isAtMaxZ}`);
+            console.log(`  -> ${isXY ? 'XY/Mz' : 'XZ/My'} view (after sign correction): Mi=${Mi?.toFixed(2)}, Mj=${Mj?.toFixed(2)}`);
         } else {
-            // Horizontal beam: conventions match between Rust solver and Pynite
-            if (isXY) {
-                // Mz view: vertical bending (moment_z)
-                Mi = forces.moment_z_i;
-                Vi = forces.shear_y_i;
-                Mj = forces.moment_z_j;
-            } else {
-                // My view: horizontal bending (moment_y)
-                Mi = forces.moment_y_i;
-                Vi = forces.shear_z_i;
-                Mj = forces.moment_y_j;
-            }
+            // Horizontal beams (Mz view): keep using local Mz for vertical bending
+            Mi = forces.moment_z_i;
+            Vi = forces.shear_y_i;
+            Mj = forces.moment_z_j;
         }
 
         // Apply tolerance: treat near-zero moments as exactly zero
@@ -1006,7 +1164,7 @@ window.showFEABendingMomentDiagramInternal = function(plane = 'XY') {
         // Calculate moment at multiple points along the member
         const segments = 40;
         const moments = [];
-        let maxAbsMoment = 0.1;
+        let maxAbsMoment = 0;
         
         for (let i = 0; i <= segments; i++) {
             const t = i / segments;
@@ -1015,6 +1173,12 @@ window.showFEABendingMomentDiagramInternal = function(plane = 'XY') {
             const M = Mi - Vi * x - w * x * x / 2;
             moments.push(M);
             maxAbsMoment = Math.max(maxAbsMoment, Math.abs(M));
+        }
+
+        // Skip members with negligible moments (below tolerance)
+        if (maxAbsMoment < momentTolerance) {
+            console.log(`Member ${member.name}: skipping - max moment ${(maxAbsMoment/1000).toFixed(3)} kNm below tolerance`);
+            return;
         }
 
         // Auto-scale: use 20% of member length for max moment visualization
@@ -1036,6 +1200,7 @@ window.showFEABendingMomentDiagramInternal = function(plane = 'XY') {
             
             // Offset perpendicular to member axis
             // Convention: positive moment (sagging/tension on bottom) shown BELOW beam
+            // Use signed moment so load reversal flips diagram side
             const offset = M * diagramScale;
             const offsetPos = pos.clone().add(perpDir.clone().multiplyScalar(offset));
             
@@ -1051,8 +1216,13 @@ window.showFEABendingMomentDiagramInternal = function(plane = 'XY') {
         for (let i = 0; i < segments; i++) {
             const M_avg = (moments[i] + moments[i + 1]) / 2;
             // FEA convention: positive moment at midspan (sagging), negative at supports (hogging)
-            // M > 0 = sagging = green, M < 0 = hogging = red
-            const color = M_avg >= 0 ? new THREE.Color(saggingColor) : new THREE.Color(hoggingColor);
+            let color;
+            if (isVertical) {
+                // Columns: all blue
+                color = new THREE.Color(columnColor);
+            } else {
+                color = M_avg >= 0 ? new THREE.Color(saggingColor) : new THREE.Color(hoggingColor);
+            }
             
             // Two triangles per segment
             positions.push(
@@ -1087,12 +1257,16 @@ window.showFEABendingMomentDiagramInternal = function(plane = 'XY') {
         window.feaDiagramObjects.push(mesh);
 
         // Draw colored outline curve - build segments with different colors
-        // Don't draw a single black outline - instead, draw colored segments
         for (let i = 0; i < segments; i++) {
             const segPoints = [curvePoints[i], curvePoints[i + 1]];
             const segGeometry = new THREE.BufferGeometry().setFromPoints(segPoints);
             const M_avg = (moments[i] + moments[i + 1]) / 2;
-            const segColor = M_avg >= 0 ? saggingColor : hoggingColor;
+            let segColor;
+            if (isVertical) {
+                segColor = columnColor;  // All blue for columns
+            } else {
+                segColor = M_avg >= 0 ? saggingColor : hoggingColor;
+            }
             const segMaterial = new THREE.LineBasicMaterial({ color: segColor, linewidth: 2 });
             const segLine = new THREE.Line(segGeometry, segMaterial);
             sceneData.scene.add(segLine);

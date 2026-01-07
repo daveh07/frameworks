@@ -210,7 +210,20 @@ pub fn ViewportToolbar(
                                 class: "tool-button-icon",
                                 title: "Extrude",
                                 onclick: move |_| {
-                                    show_extrude_panel.set(!show_extrude_panel());
+                                    let opening = !show_extrude_panel();
+                                    // Close other panels when opening this one
+                                    if opening {
+                                        show_constraints_panel.set(false);
+                                        show_point_load_panel.set(false);
+                                        show_distributed_load_panel.set(false);
+                                        show_pressure_load_panel.set(false);
+                                        show_analysis_panel.set(false);
+                                        show_mesh_panel.set(false);
+                                        show_beam_properties.set(false);
+                                        show_shell_properties.set(false);
+                                        show_material_properties.set(false);
+                                    }
+                                    show_extrude_panel.set(opening);
                                 },
                                 span { class: "btn-icon", dangerous_inner_html: ICON_EXTRUDE }
                             }
@@ -235,7 +248,19 @@ pub fn ViewportToolbar(
                                 class: "tool-button-icon",
                                 title: "Beam Properties",
                                 onclick: move |_| {
-                                    show_beam_properties.set(!show_beam_properties());
+                                    let opening = !show_beam_properties();
+                                    if opening {
+                                        show_extrude_panel.set(false);
+                                        show_constraints_panel.set(false);
+                                        show_point_load_panel.set(false);
+                                        show_distributed_load_panel.set(false);
+                                        show_pressure_load_panel.set(false);
+                                        show_analysis_panel.set(false);
+                                        show_mesh_panel.set(false);
+                                        show_shell_properties.set(false);
+                                        show_material_properties.set(false);
+                                    }
+                                    show_beam_properties.set(opening);
                                 },
                                 span { class: "btn-icon", dangerous_inner_html: ICON_BEAM }
                             }
@@ -243,7 +268,19 @@ pub fn ViewportToolbar(
                                 class: "tool-button-icon",
                                 title: "Shell/Plate Properties",
                                 onclick: move |_| {
-                                    show_shell_properties.set(!show_shell_properties());
+                                    let opening = !show_shell_properties();
+                                    if opening {
+                                        show_extrude_panel.set(false);
+                                        show_constraints_panel.set(false);
+                                        show_point_load_panel.set(false);
+                                        show_distributed_load_panel.set(false);
+                                        show_pressure_load_panel.set(false);
+                                        show_analysis_panel.set(false);
+                                        show_mesh_panel.set(false);
+                                        show_beam_properties.set(false);
+                                        show_material_properties.set(false);
+                                    }
+                                    show_shell_properties.set(opening);
                                 },
                                 span { class: "btn-icon", dangerous_inner_html: ICON_PLATE }
                             }
@@ -251,7 +288,19 @@ pub fn ViewportToolbar(
                                 class: "tool-button-icon",
                                 title: "Material Properties",
                                 onclick: move |_| {
-                                    show_material_properties.set(!show_material_properties());
+                                    let opening = !show_material_properties();
+                                    if opening {
+                                        show_extrude_panel.set(false);
+                                        show_constraints_panel.set(false);
+                                        show_point_load_panel.set(false);
+                                        show_distributed_load_panel.set(false);
+                                        show_pressure_load_panel.set(false);
+                                        show_analysis_panel.set(false);
+                                        show_mesh_panel.set(false);
+                                        show_beam_properties.set(false);
+                                        show_shell_properties.set(false);
+                                    }
+                                    show_material_properties.set(opening);
                                 },
                                 span { class: "btn-icon", dangerous_inner_html: ICON_MATERIAL }
                             }
@@ -268,7 +317,19 @@ pub fn ViewportToolbar(
                                 class: "tool-button-icon",
                                 title: "Point Load",
                                 onclick: move |_| {
-                                    show_point_load_panel.set(!show_point_load_panel());
+                                    let opening = !show_point_load_panel();
+                                    if opening {
+                                        show_extrude_panel.set(false);
+                                        show_constraints_panel.set(false);
+                                        show_distributed_load_panel.set(false);
+                                        show_pressure_load_panel.set(false);
+                                        show_analysis_panel.set(false);
+                                        show_mesh_panel.set(false);
+                                        show_beam_properties.set(false);
+                                        show_shell_properties.set(false);
+                                        show_material_properties.set(false);
+                                    }
+                                    show_point_load_panel.set(opening);
                                 },
                                 span { class: "btn-icon", dangerous_inner_html: ICON_POINT_LOAD }
                             }
@@ -276,7 +337,19 @@ pub fn ViewportToolbar(
                                 class: "tool-button-icon",
                                 title: "Distributed Load",
                                 onclick: move |_| {
-                                    show_distributed_load_panel.set(!show_distributed_load_panel());
+                                    let opening = !show_distributed_load_panel();
+                                    if opening {
+                                        show_extrude_panel.set(false);
+                                        show_constraints_panel.set(false);
+                                        show_point_load_panel.set(false);
+                                        show_pressure_load_panel.set(false);
+                                        show_analysis_panel.set(false);
+                                        show_mesh_panel.set(false);
+                                        show_beam_properties.set(false);
+                                        show_shell_properties.set(false);
+                                        show_material_properties.set(false);
+                                    }
+                                    show_distributed_load_panel.set(opening);
                                 },
                                 span { class: "btn-icon", dangerous_inner_html: ICON_DIST_LOAD }
                             }
@@ -284,7 +357,19 @@ pub fn ViewportToolbar(
                                 class: "tool-button-icon",
                                 title: "Pressure Load",
                                 onclick: move |_| {
-                                    show_pressure_load_panel.set(!show_pressure_load_panel());
+                                    let opening = !show_pressure_load_panel();
+                                    if opening {
+                                        show_extrude_panel.set(false);
+                                        show_constraints_panel.set(false);
+                                        show_point_load_panel.set(false);
+                                        show_distributed_load_panel.set(false);
+                                        show_analysis_panel.set(false);
+                                        show_mesh_panel.set(false);
+                                        show_beam_properties.set(false);
+                                        show_shell_properties.set(false);
+                                        show_material_properties.set(false);
+                                    }
+                                    show_pressure_load_panel.set(opening);
                                 },
                                 span { class: "btn-icon", dangerous_inner_html: ICON_PRESSURE }
                             }
@@ -309,7 +394,19 @@ pub fn ViewportToolbar(
                                 class: "tool-button-icon run-btn",
                                 title: "Run Structural Analysis",
                                 onclick: move |_| {
-                                    show_analysis_panel.set(!show_analysis_panel());
+                                    let opening = !show_analysis_panel();
+                                    if opening {
+                                        show_extrude_panel.set(false);
+                                        show_constraints_panel.set(false);
+                                        show_point_load_panel.set(false);
+                                        show_distributed_load_panel.set(false);
+                                        show_pressure_load_panel.set(false);
+                                        show_mesh_panel.set(false);
+                                        show_beam_properties.set(false);
+                                        show_shell_properties.set(false);
+                                        show_material_properties.set(false);
+                                    }
+                                    show_analysis_panel.set(opening);
                                 },
                                 span { class: "btn-icon", dangerous_inner_html: ICON_RUN }
                             }
@@ -326,7 +423,19 @@ pub fn ViewportToolbar(
                                 class: "tool-button-icon",
                                 title: "Add Support",
                                 onclick: move |_| {
-                                    show_constraints_panel.set(!show_constraints_panel());
+                                    let opening = !show_constraints_panel();
+                                    if opening {
+                                        show_extrude_panel.set(false);
+                                        show_point_load_panel.set(false);
+                                        show_distributed_load_panel.set(false);
+                                        show_pressure_load_panel.set(false);
+                                        show_analysis_panel.set(false);
+                                        show_mesh_panel.set(false);
+                                        show_beam_properties.set(false);
+                                        show_shell_properties.set(false);
+                                        show_material_properties.set(false);
+                                    }
+                                    show_constraints_panel.set(opening);
                                 },
                                 span { class: "btn-icon", dangerous_inner_html: ICON_CONSTRAINT }
                             }
@@ -334,7 +443,19 @@ pub fn ViewportToolbar(
                                 class: "tool-button-icon",
                                 title: "Mesh Controls",
                                 onclick: move |_| {
-                                    show_mesh_panel.set(!show_mesh_panel());
+                                    let opening = !show_mesh_panel();
+                                    if opening {
+                                        show_extrude_panel.set(false);
+                                        show_constraints_panel.set(false);
+                                        show_point_load_panel.set(false);
+                                        show_distributed_load_panel.set(false);
+                                        show_pressure_load_panel.set(false);
+                                        show_analysis_panel.set(false);
+                                        show_beam_properties.set(false);
+                                        show_shell_properties.set(false);
+                                        show_material_properties.set(false);
+                                    }
+                                    show_mesh_panel.set(opening);
                                 },
                                 span { class: "btn-icon", dangerous_inner_html: ICON_MESH }
                             }

@@ -4,7 +4,7 @@
  */
 
 // Import THREE
-const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js');
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js';
 
 // Store constraint symbols for each node
 const constraintSymbols = new Map(); // nodeId -> constraint mesh group
@@ -172,6 +172,15 @@ function createConstraintSymbol(node, supportTypeInfo, constraintData, sceneData
     group.userData.isConstraintSymbol = true;
     group.userData.supportType = supportTypeInfo.type;
     group.userData.nodeUuid = node.uuid;
+    // Store explicit DOF values for FEA extraction
+    group.userData.constraintDOFs = {
+        dx: constraintData.dx,
+        dy: constraintData.dy,
+        dz: constraintData.dz,
+        rx: constraintData.rx,
+        ry: constraintData.ry,
+        rz: constraintData.rz
+    };
     
     console.log('Group created at position:', group.position, 'with symbol:', symbol);
     
