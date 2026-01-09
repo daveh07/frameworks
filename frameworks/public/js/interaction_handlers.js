@@ -3,7 +3,7 @@
  * Manages mouse events, interaction modes, and user input
  */
 
-import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js';
+const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js');
 import { selectedNodes, selectedBeams, selectedPlates, selectedElements, createNode, createBeam, createPlateMesh, findBeamBetweenPositions } from './geometry_manager.js';
 import { addNodeSelectionHighlight, removeNodeSelectionHighlight } from './scene_setup.js';
 
@@ -903,7 +903,7 @@ export function endBoxSelection(event, sceneData) {
     if (selectionFilter !== 'all') {
         if (nodesInBox.length > 0) selectItems(nodesInBox, 'nodes');
         if (beamsInBox.length > 0) selectItems(beamsInBox, 'beams');
-        if (platesInBox.length > 0) selectItems(platesInBox, 'plates');
+        if (platesInBox.length > 0) selectMixedPlatesOrElements(platesInBox);
     } else {
         // Show selection popup
         showSelectionPopup(event.clientX, event.clientY, nodesInBox, beamsInBox, platesInBox);
@@ -949,14 +949,14 @@ function showSelectionPopup(x, y, nodesInBox, beamsInBox, platesInBox = []) {
         options.push({ label: `Select Beams (${beamsInBox.length})`, action: () => selectItems(beamsInBox, 'beams') });
     }
     if (platesInBox.length > 0) {
-        options.push({ label: `Select Plates (${platesInBox.length})`, action: () => selectItems(platesInBox, 'plates') });
+        options.push({ label: `Select Plates (${platesInBox.length})`, action: () => selectMixedPlatesOrElements(platesInBox) });
     }
     
     if (options.length > 1) {
         options.push({ label: 'Select All', action: () => { 
             selectItems(nodesInBox, 'nodes'); 
             selectItems(beamsInBox, 'beams'); 
-            selectItems(platesInBox, 'plates');
+            selectMixedPlatesOrElements(platesInBox);
         }});
     }
     
@@ -992,6 +992,27 @@ function showSelectionPopup(x, y, nodesInBox, beamsInBox, platesInBox = []) {
             }
         });
     }, 100);
+}
+
+/**
+ * Plates box selection may include either actual plates or mesh elements (faces).
+ * Route those into the correct selection sets.
+ * @param {Array<THREE.Object3D>} items
+ */
+function selectMixedPlatesOrElements(items) {
+    const plates = [];
+    const elements = [];
+
+    items.forEach(item => {
+        if (item && item.userData && item.userData.isMeshElement) {
+            elements.push(item);
+        } else {
+            plates.push(item);
+        }
+    });
+
+    if (plates.length > 0) selectItems(plates, 'plates');
+    if (elements.length > 0) selectItems(elements, 'elements');
 }
 
 /**

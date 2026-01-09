@@ -3,7 +3,7 @@
  * Handles Three.js scene initialization, camera, renderer, lighting, and grids
  */
 
-import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js';
+const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js');
 
 /**
  * Create gradient background texture

@@ -3,7 +3,7 @@
  * Handles node and beam creation, selection, and deletion
  */
 
-import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js';
+const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js');
 import { addNodeSelectionHighlight, removeNodeSelectionHighlight, clearSelectionHighlights } from './scene_setup.js';
 import { removeConstraintSymbol } from './constraints_manager.js';
 import { updateNodeLabels, updateBeamLabels, updatePlateLabels } from './labels_manager.js';
@@ -240,13 +240,6 @@ export function createBeam(beamsGroup, startPos, endPos, startNode = null, endNo
     beam.userData.startNode = startNode;
     beam.userData.endNode = endNode;
     beam.userData.id = getNextId(beamsGroup);
-    // Initialize member releases (default: all fixed)
-    beam.userData.releases = {
-        i_node_ry: false,
-        i_node_rz: false,
-        j_node_ry: false,
-        j_node_rz: false
-    };
     
     beamsGroup.add(beam);
     console.log(`Beam created between positions with ID ${beam.userData.id}`);
@@ -461,12 +454,16 @@ export function deleteSelected(nodesGroup, beamsGroup, platesGroup) {
     
     // Delete selected elements (mesh faces)
     if (selectedElements.size > 0) {
-        selectedElements.forEach(element => {
-            // Find parent group (meshElementsGroup)
-            const parent = element.parent;
-            if (parent) {
-                parent.remove(element);
+        Array.from(selectedElements).forEach(element => {
+            if (!element || !element.geometry || !element.material) return;
+
+            // Only delete if still attached somewhere in the scene graph
+            if (element.parent) {
+                element.removeFromParent();
+            } else {
+                return;
             }
+
             // Also remove edges if they exist
             if (element.children) {
                 element.children.forEach(child => {
@@ -474,35 +471,66 @@ export function deleteSelected(nodesGroup, beamsGroup, platesGroup) {
                     if (child.material) child.material.dispose();
                 });
             }
+
             element.geometry.dispose();
             element.material.dispose();
-            deletedPlates++; // Count as plates for now
+            deletedPlates++;
         });
         selectedElements.clear();
     }
     
-    // Delete selected plates
+    // Delete selected plates (and defensively handle any mesh elements mis-filed as plates)
     if (platesGroup) {
-        selectedPlates.forEach(plate => {
-            platesGroup.remove(plate);
-            plate.geometry.dispose();
-            plate.material.dispose();
+        Array.from(selectedPlates).forEach(plate => {
+            if (!plate) return;
+
+            // If a mesh element ended up in selectedPlates, treat it like an element
+            if (plate.userData && plate.userData.isMeshElement) {
+                if (plate.parent) {
+                    plate.removeFromParent();
+                    if (plate.children) {
+                        plate.children.forEach(child => {
+                            if (child.geometry) child.geometry.dispose();
+                            if (child.material) child.material.dispose();
+                        });
+                    }
+                    if (plate.geometry) plate.geometry.dispose();
+                    if (plate.material) plate.material.dispose();
+                    deletedPlates++;
+                }
+                return;
+            }
+
+            // Only delete plates that are actually in the plates group
+            if (plate.parent !== platesGroup) {
+                return;
+            }
+
+            plate.removeFromParent();
+            if (plate.geometry) plate.geometry.dispose();
+            if (plate.material) plate.material.dispose();
             deletedPlates++;
         });
         selectedPlates.clear();
     }
     
     // Delete selected beams
-    selectedBeams.forEach(beam => {
-        beamsGroup.remove(beam);
-        beam.geometry.dispose();
-        beam.material.dispose();
+    Array.from(selectedBeams).forEach(beam => {
+        if (!beam) return;
+        if (beam.parent !== beamsGroup) return;
+
+        beam.removeFromParent();
+        if (beam.geometry) beam.geometry.dispose();
+        if (beam.material) beam.material.dispose();
         deletedBeams++;
     });
     selectedBeams.clear();
     
     // Delete selected nodes and connected beams
-    selectedNodes.forEach(node => {
+    Array.from(selectedNodes).forEach(node => {
+        if (!node) return;
+        if (node.parent !== nodesGroup) return;
+
         const nodePos = node.position;
         if (selectionHighlightsGroup) {
             removeNodeSelectionHighlight(selectionHighlightsGroup, node);
@@ -536,7 +564,7 @@ export function deleteSelected(nodesGroup, beamsGroup, platesGroup) {
         });
         
         // Remove the node
-        nodesGroup.remove(node);
+        node.removeFromParent();
         
         // Remove associated constraint symbol if any
         // We need to pass a scene-like object that has the scene property or is the scene
@@ -545,8 +573,8 @@ export function deleteSelected(nodesGroup, beamsGroup, platesGroup) {
             removeConstraintSymbol(node, { scene: nodesGroup.parent });
         }
         
-        node.geometry.dispose();
-        node.material.dispose();
+        if (node.geometry) node.geometry.dispose();
+        if (node.material) node.material.dispose();
         deletedNodes++;
     });
     selectedNodes.clear();
@@ -554,8 +582,9 @@ export function deleteSelected(nodesGroup, beamsGroup, platesGroup) {
         clearSelectionHighlights(selectionHighlightsGroup);
     }
     
-    // Cleanup orphaned nodes (nodes not connected to any beam or plate)
-    cleanupOrphanedNodes(nodesGroup, beamsGroup, platesGroup);
+    // NOTE: Don't automatically cleanup orphaned nodes - it causes cascading deletions
+    // User can manually delete nodes they don't want
+    // cleanupOrphanedNodes(nodesGroup, beamsGroup, platesGroup);
     
     updateNodeLabels(nodesGroup);
     updateBeamLabels(beamsGroup);
@@ -566,6 +595,8 @@ export function deleteSelected(nodesGroup, beamsGroup, platesGroup) {
 
 /**
  * Remove nodes that are not connected to any beam or plate
+ * NOTE: This function is intentionally NOT called automatically on delete
+ * because it causes unwanted cascading deletions. Only call explicitly when needed.
  */
 function cleanupOrphanedNodes(nodesGroup, beamsGroup, platesGroup) {
     if (!nodesGroup) return;

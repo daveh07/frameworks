@@ -44,28 +44,55 @@ pub fn member_transformation_matrix(
     // Direction cosines for local x-axis (along member)
     let x = [dx / length, dy / length, dz / length];
     
-    // Calculate local z-axis direction
-    // Default: keep z parallel to global XZ plane
+    // Calculate local y and z axis directions
+    // Following PyNite convention:
+    // - For vertical members: y in XY plane (pointing -X for up, +X for down), z = global Z
+    // - For horizontal members: y = global Y (up), z = x cross y
+    // - For other members: z perpendicular to x with horizontal component, y = z cross x
     let (y, z) = if (x[0].abs() < 1e-10) && (x[2].abs() < 1e-10) {
-        // Vertical member
+        // Vertical member (X and Z components are zero, only Y component)
+        // Match PyNite: y in XY plane, z parallel to global Z
         if x[1] > 0.0 {
-            // Pointing up
-            ([0.0, 0.0, 1.0], [1.0, 0.0, 0.0])
+            // Pointing up: y = [-1, 0, 0], z = [0, 0, 1]
+            ([-1.0, 0.0, 0.0], [0.0, 0.0, 1.0])
         } else {
-            // Pointing down
-            ([0.0, 0.0, -1.0], [1.0, 0.0, 0.0])
+            // Pointing down: y = [1, 0, 0], z = [0, 0, 1]
+            ([1.0, 0.0, 0.0], [0.0, 0.0, 1.0])
         }
-    } else {
-        // Non-vertical member
-        // z-axis is in the plane containing local x and global Y
-        let global_y = [0.0, 1.0, 0.0];
-        
-        // z = x cross global_y (normalized)
+    } else if dy.abs() < 1e-10 {
+        // Horizontal member (no Y component)
+        // Match PyNite: y = global Y, z = x cross y
+        let y = [0.0, 1.0, 0.0];
         let z_unnorm = [
-            x[1] * global_y[2] - x[2] * global_y[1],
-            x[2] * global_y[0] - x[0] * global_y[2],
-            x[0] * global_y[1] - x[1] * global_y[0],
+            x[1] * y[2] - x[2] * y[1],  // x cross y
+            x[2] * y[0] - x[0] * y[2],
+            x[0] * y[1] - x[1] * y[0],
         ];
+        let z_len = (z_unnorm[0].powi(2) + z_unnorm[1].powi(2) + z_unnorm[2].powi(2)).sqrt();
+        let z = [z_unnorm[0] / z_len, z_unnorm[1] / z_len, z_unnorm[2] / z_len];
+        (y, z)
+    } else {
+        // Inclined member (has Y component but not purely vertical)
+        // Match PyNite: find z perpendicular to x and horizontal (in XZ plane)
+        // Project x onto global XZ plane
+        let proj = [dx, 0.0, dz];
+        let proj_len = (proj[0].powi(2) + proj[2].powi(2)).sqrt();
+        
+        let z_unnorm = if x[1] > 0.0 {
+            // Member going upward: z = proj cross x
+            [
+                proj[1] * x[2] - proj[2] * x[1],
+                proj[2] * x[0] - proj[0] * x[2],
+                proj[0] * x[1] - proj[1] * x[0],
+            ]
+        } else {
+            // Member going downward: z = x cross proj  
+            [
+                x[1] * proj[2] - x[2] * proj[1],
+                x[2] * proj[0] - x[0] * proj[2],
+                x[0] * proj[1] - x[1] * proj[0],
+            ]
+        };
         let z_len = (z_unnorm[0].powi(2) + z_unnorm[1].powi(2) + z_unnorm[2].powi(2)).sqrt();
         let z = [z_unnorm[0] / z_len, z_unnorm[1] / z_len, z_unnorm[2] / z_len];
         
@@ -75,6 +102,8 @@ pub fn member_transformation_matrix(
             z[2] * x[0] - z[0] * x[2],
             z[0] * x[1] - z[1] * x[0],
         ];
+        let y_len = (y[0].powi(2) + y[1].powi(2) + y[2].powi(2)).sqrt();
+        let y = [y[0] / y_len, y[1] / y_len, y[2] / y_len];
         
         (y, z)
     };
@@ -196,7 +225,7 @@ pub fn member_local_stiffness(
         // Row 10: moment My at j
         0.0,       0.0,          -6.0*eiy_l2,   0.0,    2.0*eiy_l,     0.0,          0.0,       0.0,          6.0*eiy_l2,    0.0,    4.0*eiy_l,     0.0,
         // Row 11: moment Mz at j
-        0.0,       -6.0*eiz_l2,  0.0,           0.0,    0.0,           2.0*eiz_l,    0.0,       6.0*eiz_l2,   0.0,           0.0,    0.0,           4.0*eiz_l,
+        0.0,       6.0*eiz_l2,   0.0,           0.0,    0.0,           2.0*eiz_l,    0.0,       -6.0*eiz_l2,  0.0,           0.0,    0.0,           4.0*eiz_l,
     ];
     
     Mat12::from_row_slice(&data)
@@ -485,9 +514,13 @@ mod tests {
         let j = [10.0, 0.0, 0.0];
         let t = member_transformation_matrix(&i, &j, 0.0);
         
-        // For horizontal member along X, local x = global X
-        assert_relative_eq!(t[(0, 0)], 1.0, epsilon = 1e-10);
-        assert_relative_eq!(t[(1, 1)], 0.0, epsilon = 1e-10);
+        // For horizontal member along X (PyNite convention):
+        // local x = global X (direction of member)
+        // local y = global Y (upward)
+        // local z = global Z (x cross y for member along +X)
+        assert_relative_eq!(t[(0, 0)], 1.0, epsilon = 1e-10);  // local x = global X
+        assert_relative_eq!(t[(1, 1)], 1.0, epsilon = 1e-10);  // local y = global Y
+        assert_relative_eq!(t[(2, 2)], 1.0, epsilon = 1e-10);  // local z = global Z
     }
 
     #[test]
@@ -496,8 +529,13 @@ mod tests {
         let j = [0.0, 10.0, 0.0];
         let t = member_transformation_matrix(&i, &j, 0.0);
         
-        // For vertical member, local x = global Y
-        assert_relative_eq!(t[(0, 1)], 1.0, epsilon = 1e-10);
+        // For vertical member pointing up (PyNite convention):
+        // local x = global Y (direction of member)
+        // local y = negative global X (so column bending in XY plane uses local z)
+        // local z = global Z
+        assert_relative_eq!(t[(0, 1)], 1.0, epsilon = 1e-10);   // local x = global Y
+        assert_relative_eq!(t[(1, 0)], -1.0, epsilon = 1e-10);  // local y = -global X
+        assert_relative_eq!(t[(2, 2)], 1.0, epsilon = 1e-10);   // local z = global Z
     }
 
     #[test]
@@ -507,6 +545,9 @@ mod tests {
         // Check symmetry
         for i in 0..12 {
             for j in 0..12 {
+                if (k[(i, j)] - k[(j, i)]).abs() > 1e-6 {
+                    eprintln!("Asymmetry at ({}, {}): {} vs {}", i, j, k[(i, j)], k[(j, i)]);
+                }
                 assert_relative_eq!(k[(i, j)], k[(j, i)], epsilon = 1e-6);
             }
         }

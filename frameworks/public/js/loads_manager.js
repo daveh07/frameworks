@@ -1,5 +1,5 @@
 // loads_manager.js - Manage structural loads on beams
-import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js';
+const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js');
 
 // Get selectedBeams from global (set by three_canvas.js) to avoid module instance issues
 function getSelectedBeams() {
@@ -20,8 +20,10 @@ const elementLoads = window.elementLoads;
 // Export for structure exporter
 export { beamLoads, plateLoads, elementLoads };
 
-// Store load visualizations: Map<loadId, THREE.Group>
-const loadVisuals = new Map();
+// Store load visualizations on window to persist across module instances
+// This fixes the toggle visibility issue where loadVisuals Map was getting reset
+if (!window.loadVisuals) window.loadVisuals = new Map();
+const loadVisuals = window.loadVisuals;
 
 // Load counter for unique IDs
 let loadIdCounter = 0;

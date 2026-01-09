@@ -20,11 +20,12 @@ window.refreshCurrentDiagram = function() {
     if (!window.currentDiagramType) return;
     
     switch (window.currentDiagramType) {
+        case 'moment':
         case 'moment_xy':
-            window.showFEABendingMomentDiagram();
-            break;
         case 'moment_xz':
-            window.showFEABendingMomentDiagramXZ();
+            // Keep backward compatibility with older saved state values.
+            // The moment diagram is now rendered in the model's 2D plane.
+            window.showFEABendingMomentDiagram();
             break;
         case 'shear':
             window.showFEAShearForceDiagram();
@@ -166,34 +167,12 @@ window.extractFEAStructure = function(materialConfig, beamSectionConfig) {
                 const memberName = `M${memberIdx + 1}`;
                 memberNameMap.set(beamMesh.uuid, memberName);
                 
-                // Get node positions to determine member orientation
-                const iNode = model.nodes.find(n => n.name === startNodeName);
-                const jNode = model.nodes.find(n => n.name === endNodeName);
-                
-                // Calculate member rotation angle
-                // For horizontal beams: local y-axis should point up (global Y)
-                // For vertical columns: need to rotate section to align strong axis with XY bending
+                // Member rotation: default is 0 (no rotation)
+                // The solver's local coordinate system now matches PyNite:
+                // - For vertical columns: y = [-1,0,0] (negative global X), z = [0,0,1] (global Z)
+                // - For horizontal beams: y = [0,1,0] (global Y up), z perpendicular
+                // This means moment_z is always the in-plane bending moment for 2D XY frames.
                 let rotation = 0;
-                if (iNode && jNode) {
-                    const dx = jNode.x - iNode.x;
-                    const dy = jNode.y - iNode.y;
-                    const dz = jNode.z - iNode.z;
-                    const length = Math.sqrt(dx*dx + dy*dy + dz*dz);
-                    
-                    // Check if member is vertical (dy is dominant)
-                    const isVertical = Math.abs(dy) > 0.9 * length;
-                    
-                    if (isVertical) {
-                        // Vertical column - rotate 90° to align strong axis (Iz) with XY plane bending
-                        // Default local axes for vertical member: y=globalZ, z=globalX
-                        // This means Iy resists XY bending (wrong for rectangular sections)
-                        // Rotating 90° swaps the axes so Iz resists XY bending (correct)
-                        rotation = Math.PI / 2;
-                    } else {
-                        // Horizontal beam - no rotation needed, default puts strong axis vertical
-                        rotation = 0;
-                    }
-                }
                 
                 // Get member releases from userData (default: all fixed)
                 // Handle empty objects {} by checking for actual properties
@@ -588,6 +567,11 @@ window.clearFEADiagrams = function() {
     const sceneData = window.sceneData;
     if (!sceneData) return;
 
+    // Ensure feaDiagramObjects is initialized
+    if (!window.feaDiagramObjects) {
+        window.feaDiagramObjects = [];
+    }
+
     window.feaDiagramObjects.forEach(obj => {
         sceneData.scene.remove(obj);
         if (obj.geometry) obj.geometry.dispose();
@@ -600,7 +584,7 @@ window.clearFEADiagrams = function() {
         }
     });
     window.feaDiagramObjects = [];
-    window.currentDiagramType = null;
+    // Don't clear currentDiagramType here - let the caller set it
     
     console.log('FEA diagrams cleared');
 };
@@ -653,11 +637,12 @@ window.showFEADeformedShape = function(scale = 50) {
     const I = sec.iy;
 
     // Draw deformed members with interpolated deflection
+    // Use a bright cyan color with thick lines for visibility
     const deformedMaterial = new THREE.LineBasicMaterial({ 
-        color: 0x00ff00, 
+        color: 0x00ccff,  // Bright cyan
         linewidth: 3,
-        transparent: true,
-        opacity: 0.8
+        transparent: false,
+        depthTest: true
     });
 
     model.members.forEach(member => {
@@ -797,8 +782,9 @@ window.showFEADeformedShape = function(scale = 50) {
     }
 };
 
-// Show bending moment diagram - common implementation for both planes
-window.showFEABendingMomentDiagramInternal = function(plane = 'XY') {
+// Show bending moment diagram (2D): render all member bending moments in the model plane.
+// For typical 2D frames built in this app (Z ~= 0), that means drawing in the XY plane using moment_z.
+window.showFEABendingMomentDiagramInternal = function() {
     window.clearFEADiagrams();
     
     const results = window.feaResults;
@@ -810,8 +796,10 @@ window.showFEABendingMomentDiagramInternal = function(plane = 'XY') {
         return;
     }
 
-    const isXY = plane === 'XY';
-    console.log(`Showing bending moment diagram (${plane} plane)`);
+    // Detect the primary 2D plane from node coordinates.
+    // We currently support 2D XY (Z nearly constant). If the model isn't 2D-XY,
+    // we still draw in XY as a safe default.
+    console.log('Showing bending moment diagram (2D plane)');
     console.log('Model has', model.members.length, 'members');
     console.log('Results have', results.member_forces.length, 'member forces');
 
@@ -838,15 +826,10 @@ window.showFEABendingMomentDiagramInternal = function(plane = 'XY') {
         distLoadsMap.get(load.member).push(load);
     });
 
-    // Pre-pass: Calculate global maximum moment across all members to determine
-    // the zero-tolerance threshold. Values below 1% of max are treated as zero
-    // to eliminate numerical precision artifacts in symmetrical structures.
+    // Pre-pass: Calculate global maximum moment (we use moment_z for 2D XY frames).
     let globalMaxMoment = 0;
     results.member_forces.forEach(f => {
-        globalMaxMoment = Math.max(globalMaxMoment, 
-            Math.abs(f.moment_z_i), Math.abs(f.moment_z_j),
-            Math.abs(f.moment_y_i), Math.abs(f.moment_y_j)
-        );
+        globalMaxMoment = Math.max(globalMaxMoment, Math.abs(f.moment_z_i), Math.abs(f.moment_z_j));
     });
     // Tolerance: 1% of max moment (or 10 N·m minimum to avoid div by zero issues)
     // Tolerance is used only to suppress numerical noise.
@@ -862,108 +845,16 @@ window.showFEABendingMomentDiagramInternal = function(plane = 'XY') {
     const hoggingColor = 0xff0000;  // Red for hogging moments (at supports/columns)
     const columnColor = 0x0066ff;   // Blue for all column moments
 
-    // Reconstruct the solver's local axes (same logic as fea-solver/src/math.rs::member_transformation_matrix)
-    // and apply member rotation about local x.
-    function computeMemberLocalAxes(iPos, jPos, rotationRad) {
-        const dx = jPos.x - iPos.x;
-        const dy = jPos.y - iPos.y;
-        const dz = jPos.z - iPos.z;
-
-        const L = Math.sqrt(dx * dx + dy * dy + dz * dz);
-        if (L < 1e-10) {
-            throw new Error('Member has zero length');
-        }
-
-        const xAxis = new THREE.Vector3(dx / L, dy / L, dz / L);
-        const eps = 1e-10;
-
-        let yAxis;
-        let zAxis;
-
-        // Vertical member: x approx parallel to global Y
-        if (Math.abs(xAxis.x) < eps && Math.abs(xAxis.z) < eps) {
-            // Match solver: y is +/- global Z depending on direction, z is global X
-            yAxis = new THREE.Vector3(0, 0, xAxis.y > 0 ? 1 : -1);
-            zAxis = new THREE.Vector3(1, 0, 0);
-        } else {
-            // Non-vertical member: z = x cross globalY (normalized), y = z cross x
-            const globalY = new THREE.Vector3(0, 1, 0);
-            zAxis = new THREE.Vector3().crossVectors(xAxis, globalY);
-            const zLen = zAxis.length();
-            if (zLen < eps) {
-                throw new Error('Cannot construct member local axes');
-            }
-            zAxis.divideScalar(zLen);
-            yAxis = new THREE.Vector3().crossVectors(zAxis, xAxis);
-        }
-
-        // Apply member rotation about local x-axis
-        if (Math.abs(rotationRad) > 1e-10) {
-            const cosR = Math.cos(rotationRad);
-            const sinR = Math.sin(rotationRad);
-            const y0 = yAxis.clone();
-            const z0 = zAxis.clone();
-            yAxis = y0.multiplyScalar(cosR).add(z0.clone().multiplyScalar(sinR));
-            zAxis = y0.multiplyScalar(-sinR).add(z0.multiplyScalar(cosR));
-        }
-
-        return { xAxis, yAxis, zAxis, length: L };
-    }
-
-    // Helper to get perpendicular direction for diagram offset based on plane
-    // The perpendicular determines which direction the moment diagram "bulges"
-    // For columns, we need to determine the "outward" direction based on frame geometry
-    function getPerpendicular(memberDir, isXYPlane, memberMidpoint, frameCentroid, minX, maxX, minZ, maxZ) {
-        const up = new THREE.Vector3(0, 1, 0);
-        const xAxis = new THREE.Vector3(1, 0, 0);
-        const zAxis = new THREE.Vector3(0, 0, 1);
-        
-        // Check if member is vertical (along Y axis)
-        const isVertical = Math.abs(memberDir.dot(up)) > 0.9;
-        
+    // Perpendicular direction for diagram offset (2D XY frames):
+    // - Beams: bulge in -Y so sagging shows "down"
+    // - Columns: bulge outward in +/-X based on frame centroid
+    function getPerpendicular2DXY(memberDir, memberMidpoint, frameCentroid) {
+        const isVertical = Math.abs(memberDir.y) > 0.9;
         if (isVertical) {
-            // Vertical member (column)
-            // Determine outward direction based on which edge the column is at
-            const edgeTol = 0.1;
-            if (isXYPlane) {
-                // XY plane: diagram offset in X direction
-                // Check if at min or max X edge
-                if (Math.abs(memberMidpoint.x - minX) < edgeTol) {
-                    // Column at left edge - outward is -X
-                    return xAxis.clone().multiplyScalar(-1);
-                } else if (Math.abs(memberMidpoint.x - maxX) < edgeTol) {
-                    // Column at right edge - outward is +X
-                    return xAxis.clone().multiplyScalar(1);
-                } else {
-                    // Middle column - use centroid comparison
-                    const outwardX = memberMidpoint.x - frameCentroid.x;
-                    return xAxis.clone().multiplyScalar(outwardX >= 0 ? 1 : -1);
-                }
-            } else {
-                // XZ plane: diagram offset in Z direction
-                // Check if at min or max Z edge
-                if (Math.abs(memberMidpoint.z - minZ) < edgeTol) {
-                    // Column at back edge - outward is -Z (more negative)
-                    return zAxis.clone().multiplyScalar(-1);
-                } else if (Math.abs(memberMidpoint.z - maxZ) < edgeTol) {
-                    // Column at front edge - outward is +Z (more positive)
-                    return zAxis.clone().multiplyScalar(1);
-                } else {
-                    // Middle column - use centroid comparison
-                    const outwardZ = memberMidpoint.z - frameCentroid.z;
-                    return zAxis.clone().multiplyScalar(outwardZ >= 0 ? 1 : -1);
-                }
-            }
-        } else {
-            // Horizontal beam - unchanged from before
-            if (isXYPlane) {
-                // XY plane (Mz bending): diagram should bulge in Y direction (vertical)
-                return up.clone();
-            } else {
-                // XZ plane (My bending): diagram should bulge in Y direction too
-                return up.clone();
-            }
+            const outwardSign = memberMidpoint.x >= frameCentroid.x ? 1 : -1;
+            return new THREE.Vector3(outwardSign, 0, 0);
         }
+        return new THREE.Vector3(0, -1, 0);
     }
 
     let diagramsCreated = 0;
@@ -1014,302 +905,194 @@ window.showFEABendingMomentDiagramInternal = function(plane = 'XY') {
             
             // Determine member orientation
             const isVertical = Math.abs(memberDir.y) > 0.9;
-            const isAlongX = !isVertical && Math.abs(memberDir.x) > 0.7;
-            const isAlongZ = !isVertical && Math.abs(memberDir.z) > 0.7;
             
             // Calculate member midpoint
             const memberMidpoint = new THREE.Vector3().lerpVectors(iPos, jPos, 0.5);
             
-            // Check if column is at edge of frame
-            const isAtMinX = Math.abs(memberMidpoint.x - minX) < edgeTolerance;
-            const isAtMaxX = Math.abs(memberMidpoint.x - maxX) < edgeTolerance;
-            const isAtMinZ = Math.abs(memberMidpoint.z - minZ) < edgeTolerance;
-            const isAtMaxZ = Math.abs(memberMidpoint.z - maxZ) < edgeTolerance;
-            const isEdgeColumnX = isAtMinX || isAtMaxX;
-            const isEdgeColumnZ = isAtMinZ || isAtMaxZ;
-            
-            // Filter members based on view:
-            // - XY (Mz) view: show columns that participate in the XY frames (edge columns in X).
-            // - XZ (My) view: show ONLY corner columns (edge in X and edge in Z).
-            if (isXY) {
-                if (isVertical && !isEdgeColumnX) {
-                    console.log(`Member ${member.name}: skipping middle-X column in Mz view`);
-                    return;
-                }
-            } else {
-                // My view: only corner columns (matches SpaceGASS symmetric behavior)
-                if (!isVertical) {
-                    console.log(`Member ${member.name}: skipping beam in My view`);
-                    return;
-                }
-                if (!(isEdgeColumnX && isEdgeColumnZ)) {
-                    console.log(`Member ${member.name}: skipping non-corner column in My view`);
-                    return;
-                }
-            }
-            
-            console.log(`Member ${member.name}: isVertical=${isVertical}, isAlongX=${isAlongX}, isAlongZ=${isAlongZ}, edgeX=${isEdgeColumnX}, edgeZ=${isEdgeColumnZ}, showing in ${plane} view`);
-
-            // Get perpendicular direction for diagram offset based on plane and member orientation
-            const perpDir = getPerpendicular(memberDir, isXY, memberMidpoint, frameCentroid, minX, maxX, minZ, maxZ);
+            console.log(`Member ${member.name}: isVertical=${isVertical}, showing in 2D XY view`);
 
             // Get distributed load on this member
             const loads = distLoadsMap.get(member.name) || [];
-        let w = 0;
-        loads.forEach(load => {
-            // For XY plane: use FY loads; for XZ plane: use FZ loads
-            if ((isXY && load.direction === 'FY') || (!isXY && load.direction === 'FZ')) {
-                w += load.w1; // N/m (assumes uniform w1 = w2)
-            }
-        });
+            let w = 0;
+            loads.forEach(load => {
+                // 2D frame in XY: distributed loads are expected as FY
+                if (load.direction === 'FY') {
+                    w += load.w1; // N/m (assumes uniform w1 = w2)
+                }
+            });
 
-        // End moments and shear from FEA
-        // The moment/shear to display depends on member orientation AND view plane
-        // 
-        // LOCAL AXIS CONVENTIONS (PyNite):
-        // 
-        // For VERTICAL members (along Y):
-        //   If pointing up: local y = [-1, 0, 0] (global -X), local z = [0, 0, 1] (global +Z)
-        //   With 90° rotation: local y rotates, local z stays in XZ plane
-        //
-        // For HORIZONTAL members along X:
-        //   local x = [1, 0, 0], local y = [0, 1, 0] (global Y), local z = [0, 0, -1] (global -Z)
-        //   Mz = moment about local z = bending in XY plane (vertical bending from gravity)
-        //
-        // For HORIZONTAL members along Z:
-        //   local x = [0, 0, 1], local y = [0, 1, 0] (global Y), local z = [-1, 0, 0] (global -X)  
-        //   Mz = moment about local z = bending about -X = bending in YZ plane (vertical bending from gravity)
-        //
-        // So Mz is ALWAYS the gravity-induced vertical bending for horizontal beams!
-        // My is the lateral/horizontal plane bending.
-        // Moment component selection (matches PyNite local-axis rules + our 90° column rotation):
-        // - We rotate VERTICAL columns 90° about their local x-axis (global Y) to align section strong axis.
-        //   That rotation swaps the column local y/z directions:
-        //     before rot:  local y = -X, local z = +Z
-        //     after  rot:  local y = +Z, local z = +X
-        //   So:
-        //     - Bending about GLOBAL Z (XY-frame bending) => column moment_y
-        //     - Bending about GLOBAL X (out-of-plane / long-direction) => column moment_z
-        //
-        // View mapping:
-        // - Mz view (XY plane): show XY-frame bending
-        //   - Columns: use moment_y / shear_z
-        //   - Beams:   use moment_z / shear_y
-        // - My view (XZ plane): show out-of-plane bending of columns
-        //   - Columns: use moment_z / shear_y
-        //   - Beams:   not shown (filtered above)
-        let Mi, Vi, Mj;
-
-        // IMPORTANT: match the solver's actual local-axis convention.
-        // See fea-solver/src/math.rs::member_transformation_matrix.
-        //
-        // For vertical members, the solver constructs local axes so that:
-        // - local x is along the member (i -> j)
-        // - for vertical members: y is ±global Z, z is global X BEFORE rotation
-        // - then we apply member.rotation about local x
-        //
-        // With our 90° column rotation (rotation = +pi/2), vertical columns end up with:
-        // - local y ≈ global +X
-        // - local z ≈ ±global Z (sign depends on whether the member points up or down)
-        //
-        // Therefore:
-        // - XY ("Mz") view (frame bending in X): use local moment_z, but correct its sign so
-        //   that it represents a consistent global-Z bending sense regardless of i/j ordering.
-        // - XZ ("My") view (long-direction column bending): use local moment_y.
-        if (isVertical) {
-            // For columns (vertical members), we need to pick the correct local moment component
-            // based on which global plane we're viewing.
-            //
-            // Our solver convention (after 90° rotation for columns):
-            //   - moment_z = bending in the XY plane (frame plane, about global Z axis)
-            //   - moment_y = bending in the XZ plane (out-of-plane, about global X axis)
-            //
-            // XY view (Mz): show moment_z (frame-plane bending)
-            // XZ view (My): show moment_y (out-of-plane bending)
+            // 2D XY bending: use solver-reported moment_z for ALL members and draw in the XY plane.
+            let Mi = forces.moment_z_i;
+            let Mj = forces.moment_z_j;
+            // Use solver-reported shear directly
+            let Vi = forces.shear_y_i;
             
-            if (isXY) {
-                // Mz view: use moment_y for XY-plane bending
-                Mi = forces.moment_y_i;
-                Mj = forces.moment_y_j;
-            } else {
-                // My view: use moment_z for XZ-plane bending
-                Mi = forces.moment_z_i;
-                Mj = forces.moment_z_j;
+            console.log(`Member ${member.name}: Raw moments Mi=${Mi}, Mj=${Mj}, Vi=${Vi}`);
+
+            // Perpendicular direction for diagram offset
+            const perpDir = getPerpendicular2DXY(memberDir, memberMidpoint, frameCentroid);
+
+            // Apply tolerance: treat near-zero moments as exactly zero
+            if (Math.abs(Mi) < momentTolerance) Mi = 0;
+            if (Math.abs(Mj) < momentTolerance) Mj = 0;
+            if (Math.abs(Vi) < momentTolerance) Vi = 0;
+
+            // Calculate moment at multiple points along the member
+            const segments = 40;
+            const moments = [];
+            let maxAbsMoment = 0;
+            
+            for (let i = 0; i <= segments; i++) {
+                const t = i / segments;
+                const x = t * length;
+                let M;
+                if (isVertical) {
+                    // For columns: linear interpolation from Mi to Mj (no distributed load typically)
+                    // M(x) = Mi + (Mj - Mi) * (x/L)
+                    M = Mi + (Mj - Mi) * t;
+                } else {
+                    // For beams with UDL: M(x) = Mi - Vi*x - w*x²/2
+                    M = Mi - Vi * x - w * x * x / 2;
+                }
+                moments.push(M);
+                maxAbsMoment = Math.max(maxAbsMoment, Math.abs(M));
             }
 
-            // No sign correction - using raw moment values
+            // Skip members with negligible moments (below tolerance)
+            if (maxAbsMoment < momentTolerance) {
+                console.log(`Member ${member.name}: skipping - max moment ${(maxAbsMoment/1000).toFixed(3)} kNm below tolerance`);
+                return;
+            }
 
-            // Columns have no distributed load; enforce linear moment variation.
-            Vi = (Mi - Mj) / length;
+            // Auto-scale: use 20% of member length for max moment visualization
+            // Then apply the user-adjustable global scale factor
+            const baseScale = (length * 0.20) / maxAbsMoment;
+            const userScale = window.diagramScale || 1.0;
+            const diagramScale = baseScale * userScale;
             
-            console.log(`Column ${member.name}: atMinX=${isAtMinX}, atMaxX=${isAtMaxX}, atMinZ=${isAtMinZ}, atMaxZ=${isAtMaxZ}`);
-            console.log(`  -> ${isXY ? 'XY/Mz' : 'XZ/My'} view (after sign correction): Mi=${Mi?.toFixed(2)}, Mj=${Mj?.toFixed(2)}`);
-        } else {
-            // Horizontal beams (Mz view): keep using local Mz for vertical bending
-            Mi = forces.moment_z_i;
-            Vi = forces.shear_y_i;
-            Mj = forces.moment_z_j;
-        }
+            console.log(`Member ${member.name}: Mi=${(Mi/1000).toFixed(1)} kNm, Vi=${(Vi/1000).toFixed(1)} kN, Mj=${(Mj/1000).toFixed(1)} kNm, w=${w} N/m, Mmax=${(maxAbsMoment/1000).toFixed(1)} kNm`);
 
-        // Apply tolerance: treat near-zero moments as exactly zero
-        // This eliminates numerical precision artifacts in symmetrical structures
-        if (Math.abs(Mi) < momentTolerance) Mi = 0;
-        if (Math.abs(Mj) < momentTolerance) Mj = 0;
-        if (Math.abs(Vi) < momentTolerance) Vi = 0;
-
-        // For member with shear, end moments and UDL:
-        // M(x) = Mi - Vi*x - w*x²/2  (following Pynite convention)
-        // This correctly handles the moment diagram for frames
-        
-        // Calculate moment at multiple points along the member
-        const segments = 40;
-        const moments = [];
-        let maxAbsMoment = 0;
-        
-        for (let i = 0; i <= segments; i++) {
-            const t = i / segments;
-            const x = t * length;
-            // Using proper beam mechanics: M(x) = Mi - Vi*x - w*x²/2
-            const M = Mi - Vi * x - w * x * x / 2;
-            moments.push(M);
-            maxAbsMoment = Math.max(maxAbsMoment, Math.abs(M));
-        }
-
-        // Skip members with negligible moments (below tolerance)
-        if (maxAbsMoment < momentTolerance) {
-            console.log(`Member ${member.name}: skipping - max moment ${(maxAbsMoment/1000).toFixed(3)} kNm below tolerance`);
-            return;
-        }
-
-        // Auto-scale: use 20% of member length for max moment visualization
-        // Then apply the user-adjustable global scale factor
-        const baseScale = (length * 0.20) / maxAbsMoment;
-        const userScale = window.diagramScale || 1.0;
-        const diagramScale = baseScale * userScale;
-        
-        console.log(`Member ${member.name}: Mi=${(Mi/1000).toFixed(1)} kNm, Vi=${(Vi/1000).toFixed(1)} kN, Mj=${(Mj/1000).toFixed(1)} kNm, w=${w} N/m, Mmax=${(maxAbsMoment/1000).toFixed(1)} kNm`);
-
-        // Create filled moment diagram curve
-        const curvePoints = [];
-        const basePoints = [];
-        
-        for (let i = 0; i <= segments; i++) {
-            const t = i / segments;
-            const pos = new THREE.Vector3().lerpVectors(iPos, jPos, t);
-            const M = moments[i];
+            // Create filled moment diagram curve
+            const curvePoints = [];
+            const basePoints = [];
             
-            // Offset perpendicular to member axis
-            // Convention: positive moment (sagging/tension on bottom) shown BELOW beam
-            // Use signed moment so load reversal flips diagram side
-            const offset = M * diagramScale;
-            const offsetPos = pos.clone().add(perpDir.clone().multiplyScalar(offset));
-            
-            curvePoints.push(offsetPos);
-            basePoints.push(pos.clone());
-        }
+            for (let i = 0; i <= segments; i++) {
+                const t = i / segments;
+                const pos = new THREE.Vector3().lerpVectors(iPos, jPos, t);
+                const M = moments[i];
+                
+                // Offset perpendicular to member axis
+                // Convention: positive moment (sagging/tension on bottom) shown BELOW beam
+                // Negate to match structural engineering convention (positive moment = sagging = diagram below)
+                const offset = -M * diagramScale;
+                const offsetPos = pos.clone().add(perpDir.clone().multiplyScalar(offset));
+                
+                curvePoints.push(offsetPos);
+                basePoints.push(pos.clone());
+            }
 
-        // Create filled shape using triangles
-        const geometry = new THREE.BufferGeometry();
-        const positions = [];
-        const colors = [];
-        
-        for (let i = 0; i < segments; i++) {
-            const M_avg = (moments[i] + moments[i + 1]) / 2;
-            // FEA convention: positive moment at midspan (sagging), negative at supports (hogging)
-            let color;
-            if (isVertical) {
-                // Columns: all blue
-                color = new THREE.Color(columnColor);
-            } else {
-                color = M_avg >= 0 ? new THREE.Color(saggingColor) : new THREE.Color(hoggingColor);
+            // Create filled shape using triangles
+            const geometry = new THREE.BufferGeometry();
+            const positions = [];
+            const colors = [];
+            
+            for (let i = 0; i < segments; i++) {
+                const M_avg = (moments[i] + moments[i + 1]) / 2;
+                // FEA convention: positive moment at midspan (sagging), negative at supports (hogging)
+                let color;
+                if (isVertical) {
+                    // Columns: all blue
+                    color = new THREE.Color(columnColor);
+                } else {
+                    color = M_avg >= 0 ? new THREE.Color(saggingColor) : new THREE.Color(hoggingColor);
+                }
+                
+                // Two triangles per segment
+                positions.push(
+                    basePoints[i].x, basePoints[i].y, basePoints[i].z,
+                    curvePoints[i].x, curvePoints[i].y, curvePoints[i].z,
+                    curvePoints[i + 1].x, curvePoints[i + 1].y, curvePoints[i + 1].z
+                );
+                positions.push(
+                    basePoints[i].x, basePoints[i].y, basePoints[i].z,
+                    curvePoints[i + 1].x, curvePoints[i + 1].y, curvePoints[i + 1].z,
+                    basePoints[i + 1].x, basePoints[i + 1].y, basePoints[i + 1].z
+                );
+                
+                for (let j = 0; j < 6; j++) {
+                    colors.push(color.r, color.g, color.b);
+                }
             }
             
-            // Two triangles per segment
-            positions.push(
-                basePoints[i].x, basePoints[i].y, basePoints[i].z,
-                curvePoints[i].x, curvePoints[i].y, curvePoints[i].z,
-                curvePoints[i + 1].x, curvePoints[i + 1].y, curvePoints[i + 1].z
-            );
-            positions.push(
-                basePoints[i].x, basePoints[i].y, basePoints[i].z,
-                curvePoints[i + 1].x, curvePoints[i + 1].y, curvePoints[i + 1].z,
-                basePoints[i + 1].x, basePoints[i + 1].y, basePoints[i + 1].z
-            );
+            geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
             
-            for (let j = 0; j < 6; j++) {
-                colors.push(color.r, color.g, color.b);
+            const material = new THREE.MeshBasicMaterial({ 
+                vertexColors: true,
+                side: THREE.DoubleSide,
+                transparent: true,
+                opacity: 0.4,
+                depthWrite: false
+            });
+            
+            const mesh = new THREE.Mesh(geometry, material);
+            sceneData.scene.add(mesh);
+            window.feaDiagramObjects.push(mesh);
+
+            // Draw colored outline curve - build segments with different colors
+            for (let i = 0; i < segments; i++) {
+                const segPoints = [curvePoints[i], curvePoints[i + 1]];
+                const segGeometry = new THREE.BufferGeometry().setFromPoints(segPoints);
+                const M_avg = (moments[i] + moments[i + 1]) / 2;
+                let segColor;
+                if (isVertical) {
+                    segColor = columnColor;  // All blue for columns
+                } else {
+                    segColor = M_avg >= 0 ? saggingColor : hoggingColor;
+                }
+                const segMaterial = new THREE.LineBasicMaterial({ color: segColor, linewidth: 2 });
+                const segLine = new THREE.Line(segGeometry, segMaterial);
+                sceneData.scene.add(segLine);
+                window.feaDiagramObjects.push(segLine);
             }
-        }
-        
-        geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-        geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-        
-        const material = new THREE.MeshBasicMaterial({ 
-            vertexColors: true,
-            side: THREE.DoubleSide,
-            transparent: true,
-            opacity: 0.4,
-            depthWrite: false
-        });
-        
-        const mesh = new THREE.Mesh(geometry, material);
-        sceneData.scene.add(mesh);
-        window.feaDiagramObjects.push(mesh);
 
-        // Draw colored outline curve - build segments with different colors
-        for (let i = 0; i < segments; i++) {
-            const segPoints = [curvePoints[i], curvePoints[i + 1]];
-            const segGeometry = new THREE.BufferGeometry().setFromPoints(segPoints);
-            const M_avg = (moments[i] + moments[i + 1]) / 2;
-            let segColor;
-            if (isVertical) {
-                segColor = columnColor;  // All blue for columns
-            } else {
-                segColor = M_avg >= 0 ? saggingColor : hoggingColor;
+            // Find max and min moments and their positions
+            let maxMomentIdx = 0, minMomentIdx = 0;
+            let maxM = moments[0], minM = moments[0];
+            for (let i = 1; i < moments.length; i++) {
+                if (moments[i] > maxM) { maxM = moments[i]; maxMomentIdx = i; }
+                if (moments[i] < minM) { minM = moments[i]; minMomentIdx = i; }
             }
-            const segMaterial = new THREE.LineBasicMaterial({ color: segColor, linewidth: 2 });
-            const segLine = new THREE.Line(segGeometry, segMaterial);
-            sceneData.scene.add(segLine);
-            window.feaDiagramObjects.push(segLine);
-        }
 
-        // Find max and min moments and their positions
-        let maxMomentIdx = 0, minMomentIdx = 0;
-        let maxM = moments[0], minM = moments[0];
-        for (let i = 1; i < moments.length; i++) {
-            if (moments[i] > maxM) { maxM = moments[i]; maxMomentIdx = i; }
-            if (moments[i] < minM) { minM = moments[i]; minMomentIdx = i; }
-        }
-
-        // Add label at maximum positive moment (sagging) if significant
-        if (Math.abs(maxM) > 0.1) {  // > 0.1 N·m threshold
-            const maxLabelPos = curvePoints[maxMomentIdx].clone().add(perpDir.clone().multiplyScalar(0.3));
-            addDiagramLabelClean(maxLabelPos, `${(maxM/1000).toFixed(2)}`, sceneData);
-        }
-        
-        // Add label at minimum moment (most negative / hogging) if different position and significant
-        if (Math.abs(minM) > 0.1 && Math.abs(minMomentIdx - maxMomentIdx) > 3) {
-            const minLabelPos = curvePoints[minMomentIdx].clone().add(perpDir.clone().multiplyScalar(0.3));
-            addDiagramLabelClean(minLabelPos, `${(minM/1000).toFixed(2)}`, sceneData);
-        }
-        
-        // Add end moment labels (Mi and Mj) if not already labeled
-        const startM = moments[0];
-        const endM = moments[moments.length - 1];
-        
-        // Label at start if significant and not at max/min position
-        if (Math.abs(startM) > 0.1 && maxMomentIdx > 2 && minMomentIdx > 2) {
-            const startLabelPos = curvePoints[0].clone().add(perpDir.clone().multiplyScalar(0.3));
-            addDiagramLabelClean(startLabelPos, `${(startM/1000).toFixed(2)}`, sceneData);
-        }
-        
-        // Label at end if significant and not at max/min position  
-        if (Math.abs(endM) > 0.1 && maxMomentIdx < moments.length - 3 && minMomentIdx < moments.length - 3) {
-            const endLabelPos = curvePoints[curvePoints.length - 1].clone().add(perpDir.clone().multiplyScalar(0.3));
-            addDiagramLabelClean(endLabelPos, `${(endM/1000).toFixed(2)}`, sceneData);
-        }
-        
-        diagramsCreated++;
+            // Add label at maximum positive moment (sagging) if significant
+            if (Math.abs(maxM) > 0.1) {  // > 0.1 N·m threshold
+                const maxLabelPos = curvePoints[maxMomentIdx].clone().add(perpDir.clone().multiplyScalar(0.3));
+                addDiagramLabelClean(maxLabelPos, `${(maxM/1000).toFixed(2)}`, sceneData);
+            }
+            
+            // Add label at minimum moment (most negative / hogging) if different position and significant
+            if (Math.abs(minM) > 0.1 && Math.abs(minMomentIdx - maxMomentIdx) > 3) {
+                const minLabelPos = curvePoints[minMomentIdx].clone().add(perpDir.clone().multiplyScalar(0.3));
+                addDiagramLabelClean(minLabelPos, `${(minM/1000).toFixed(2)}`, sceneData);
+            }
+            
+            // Add end moment labels (Mi and Mj) if not already labeled
+            const startM = moments[0];
+            const endM = moments[moments.length - 1];
+            
+            // Label at start if significant and not at max/min position
+            if (Math.abs(startM) > 0.1 && maxMomentIdx > 2 && minMomentIdx > 2) {
+                const startLabelPos = curvePoints[0].clone().add(perpDir.clone().multiplyScalar(0.3));
+                addDiagramLabelClean(startLabelPos, `${(startM/1000).toFixed(2)}`, sceneData);
+            }
+            
+            // Label at end if significant and not at max/min position  
+            if (Math.abs(endM) > 0.1 && maxMomentIdx < moments.length - 3 && minMomentIdx < moments.length - 3) {
+                const endLabelPos = curvePoints[curvePoints.length - 1].clone().add(perpDir.clone().multiplyScalar(0.3));
+                addDiagramLabelClean(endLabelPos, `${(endM/1000).toFixed(2)}`, sceneData);
+            }
+            
+            diagramsCreated++;
         } catch (err) {
             console.error(`Error creating diagram for ${member.name}:`, err);
         }
@@ -1318,20 +1101,18 @@ window.showFEABendingMomentDiagramInternal = function(plane = 'XY') {
     console.log('Total moment diagrams created:', diagramsCreated);
     
     if (window.addSolverLog) {
-        window.addSolverLog(`Bending moment diagram (${plane} plane) displayed`, 'info');
+        window.addSolverLog('Bending moment diagram displayed', 'info');
     }
 };
 
-// Wrapper function for XY plane (about Z-axis) - default behavior
 window.showFEABendingMomentDiagram = function() {
-    window.currentDiagramType = 'moment_xy';
-    window.showFEABendingMomentDiagramInternal('XY');
+    window.currentDiagramType = 'moment';
+    window.showFEABendingMomentDiagramInternal();
 };
 
-// Wrapper function for XZ plane (about Y-axis)
+// Backwards-compatible alias (no longer used by the UI)
 window.showFEABendingMomentDiagramXZ = function() {
-    window.currentDiagramType = 'moment_xz';
-    window.showFEABendingMomentDiagramInternal('XZ');
+    window.showFEABendingMomentDiagram();
 };
 
 // Show shear force diagram - internal function with plane parameter
@@ -1371,9 +1152,8 @@ window.showFEAShearForceDiagramInternal = function(plane = 'XY') {
         distLoadsMap.get(load.member).push(load);
     });
 
-    // Colors for shear diagram
-    const positiveColor = 0x00ff66;  // Green for positive shear
-    const negativeColor = 0xff6600;  // Orange for negative shear
+    // Colors for shear diagram - all orange (darker shade)
+    const shearColor = 0xcc5500;  // Darker orange for all shear forces
 
     // Helper to get perpendicular direction for diagram offset
     function getPerpendicular(memberDir, isXYPlane) {
@@ -1484,8 +1264,7 @@ window.showFEAShearForceDiagramInternal = function(plane = 'XY') {
         const colors = [];
         
         for (let i = 0; i < segments; i++) {
-            const V_avg = (shears[i] + shears[i + 1]) / 2;
-            const color = V_avg > 0 ? new THREE.Color(positiveColor) : new THREE.Color(negativeColor);
+            const color = new THREE.Color(shearColor);  // All orange
             
             positions.push(
                 basePoints[i].x, basePoints[i].y, basePoints[i].z,
@@ -1518,13 +1297,11 @@ window.showFEAShearForceDiagramInternal = function(plane = 'XY') {
         sceneData.scene.add(mesh);
         window.feaDiagramObjects.push(mesh);
 
-        // Draw colored outline segments
+        // Draw outline segments - all orange
         for (let i = 0; i < segments; i++) {
             const segPoints = [curvePoints[i], curvePoints[i + 1]];
             const segGeometry = new THREE.BufferGeometry().setFromPoints(segPoints);
-            const V_avg = (shears[i] + shears[i + 1]) / 2;
-            const segColor = V_avg > 0 ? positiveColor : negativeColor;
-            const segMaterial = new THREE.LineBasicMaterial({ color: segColor, linewidth: 2 });
+            const segMaterial = new THREE.LineBasicMaterial({ color: shearColor, linewidth: 2 });
             const segLine = new THREE.Line(segGeometry, segMaterial);
             sceneData.scene.add(segLine);
             window.feaDiagramObjects.push(segLine);
@@ -1586,7 +1363,18 @@ window.showFEAAxialForceDiagram = function() {
         nodePos.set(n.name, new THREE.Vector3(n.x, n.y, n.z));
     });
 
-    // Draw axial force as colored members
+    // Draw axial force as filled rectangles perpendicular to member - RED for all axial forces
+    const axialColor = 0xff0000;  // Red color for axial force diagram
+    
+    // Find max axial for scaling
+    let maxAxial = 0.1;
+    model.members.forEach(member => {
+        const forces = forcesMap.get(member.name);
+        if (forces) {
+            maxAxial = Math.max(maxAxial, Math.abs(forces.axial_i));
+        }
+    });
+    
     model.members.forEach(member => {
         const forces = forcesMap.get(member.name);
         if (!forces) return;
@@ -1596,25 +1384,65 @@ window.showFEAAxialForceDiagram = function() {
         if (!iPos || !jPos) return;
 
         const axial = forces.axial_i;
+        if (Math.abs(axial) < 1) return;  // Skip negligible axial
         
-        // Color: red for compression, blue for tension
-        const color = axial < 0 ? 0xff0000 : 0x0000ff;
+        const memberDir = new THREE.Vector3().subVectors(jPos, iPos);
+        const length = memberDir.length();
+        memberDir.normalize();
         
-        const material = new THREE.LineBasicMaterial({ 
-            color: color, 
-            linewidth: 5 
+        // Perpendicular direction for diagram
+        const isVertical = Math.abs(memberDir.y) > 0.9;
+        const perpDir = isVertical 
+            ? new THREE.Vector3(1, 0, 0) 
+            : new THREE.Vector3(0, 1, 0);
+        
+        // Scale: 15% of member length for max axial
+        const baseScale = (length * 0.15) / maxAxial;
+        const userScale = window.diagramScale || 1.0;
+        const diagramScale = baseScale * userScale;
+        const offset = Math.abs(axial) * diagramScale;
+        
+        // Create filled rectangle along member
+        const geometry = new THREE.BufferGeometry();
+        const positions = [];
+        
+        // Rectangle corners
+        const p1 = iPos.clone();
+        const p2 = iPos.clone().add(perpDir.clone().multiplyScalar(offset));
+        const p3 = jPos.clone().add(perpDir.clone().multiplyScalar(offset));
+        const p4 = jPos.clone();
+        
+        // Two triangles
+        positions.push(p1.x, p1.y, p1.z, p2.x, p2.y, p2.z, p3.x, p3.y, p3.z);
+        positions.push(p1.x, p1.y, p1.z, p3.x, p3.y, p3.z, p4.x, p4.y, p4.z);
+        
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        
+        const material = new THREE.MeshBasicMaterial({ 
+            color: axialColor,
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.5,
+            depthWrite: false
         });
-
-        const points = [iPos.clone(), jPos.clone()];
-        const geometry = new THREE.BufferGeometry().setFromPoints(points);
-        const line = new THREE.Line(geometry, material);
-        sceneData.scene.add(line);
-        window.feaDiagramObjects.push(line);
+        
+        const mesh = new THREE.Mesh(geometry, material);
+        sceneData.scene.add(mesh);
+        window.feaDiagramObjects.push(mesh);
+        
+        // Outline
+        const outlineGeom = new THREE.BufferGeometry().setFromPoints([p1, p2, p3, p4, p1]);
+        const outlineMat = new THREE.LineBasicMaterial({ color: axialColor, linewidth: 2 });
+        const outline = new THREE.Line(outlineGeom, outlineMat);
+        sceneData.scene.add(outline);
+        window.feaDiagramObjects.push(outline);
 
         // Add label at midpoint
         const midPoint = new THREE.Vector3().addVectors(iPos, jPos).multiplyScalar(0.5);
-        const label = axial < 0 ? `C=${(-axial/1000).toFixed(1)} kN` : `T=${(axial/1000).toFixed(1)} kN`;
-        addDiagramLabel(midPoint, label, sceneData);
+        const labelOffset = isVertical ? new THREE.Vector3(0.5, 0, 0) : new THREE.Vector3(0, 0.5, 0);
+        const labelPos = midPoint.clone().add(labelOffset);
+        const label = axial < 0 ? `${(-axial/1000).toFixed(1)} kN (C)` : `${(axial/1000).toFixed(1)} kN (T)`;
+        addDiagramLabel(labelPos, label, sceneData);
     });
 
     if (window.addSolverLog) {

@@ -1050,9 +1050,6 @@ window.showFEABendingMomentDiagramInternal = function(plane = 'XY') {
             
             console.log(`Member ${member.name}: isVertical=${isVertical}, isAlongX=${isAlongX}, isAlongZ=${isAlongZ}, edgeX=${isEdgeColumnX}, edgeZ=${isEdgeColumnZ}, showing in ${plane} view`);
 
-            // Get perpendicular direction for diagram offset based on plane and member orientation
-            const perpDir = getPerpendicular(memberDir, isXY, memberMidpoint, frameCentroid, minX, maxX, minZ, maxZ);
-
             // Get distributed load on this member
             const loads = distLoadsMap.get(member.name) || [];
         let w = 0;
@@ -1100,50 +1097,26 @@ window.showFEABendingMomentDiagramInternal = function(plane = 'XY') {
         //   - Beams:   not shown (filtered above)
         let Mi, Vi, Mj;
 
-        // IMPORTANT: match the solver's actual local-axis convention.
-        // See fea-solver/src/math.rs::member_transformation_matrix.
-        //
-        // For vertical members, the solver constructs local axes so that:
-        // - local x is along the member (i -> j)
-        // - for vertical members: y is ±global Z, z is global X BEFORE rotation
-        // - then we apply member.rotation about local x
-        //
-        // With our 90° column rotation (rotation = +pi/2), vertical columns end up with:
-        // - local y ≈ global +X
-        // - local z ≈ ±global Z (sign depends on whether the member points up or down)
-        //
-        // Therefore:
-        // - XY ("Mz") view (frame bending in X): use local moment_z, but correct its sign so
-        //   that it represents a consistent global-Z bending sense regardless of i/j ordering.
-        // - XZ ("My") view (long-direction column bending): use local moment_y.
+        // Get perpendicular direction BEFORE moment calculation
+        const perpDir = getPerpendicular(memberDir, isXY, memberMidpoint, frameCentroid, minX, maxX, minZ, maxZ);
+
         if (isVertical) {
-            // For columns (vertical members), we need to pick the correct local moment component
-            // based on which global plane we're viewing.
-            //
-            // Our solver convention (after 90° rotation for columns):
-            //   - moment_z = bending in the XY plane (frame plane, about global Z axis)
-            //   - moment_y = bending in the XZ plane (out-of-plane, about global X axis)
-            //
-            // XY view (Mz): show moment_z (frame-plane bending)
-            // XZ view (My): show moment_y (out-of-plane bending)
-            
             if (isXY) {
-                // Mz view: use moment_y for XY-plane bending
                 Mi = forces.moment_y_i;
                 Mj = forces.moment_y_j;
             } else {
-                // My view: use moment_z for XZ-plane bending
                 Mi = forces.moment_z_i;
                 Mj = forces.moment_z_j;
             }
 
-            // No sign correction - using raw moment values
+            // Normalize sign: multiply by perpDir component so diagram always bulges outward for tension side
+            // perpDir.x is -1 for left columns, +1 for right columns (XY view)
+            // perpDir.z is -1 for back columns, +1 for front columns (XZ view)
+            const signCorrection = isXY ? perpDir.x : perpDir.z;
+            Mi = Mi * signCorrection;
+            Mj = Mj * signCorrection;
 
-            // Columns have no distributed load; enforce linear moment variation.
             Vi = (Mi - Mj) / length;
-            
-            console.log(`Column ${member.name}: atMinX=${isAtMinX}, atMaxX=${isAtMaxX}, atMinZ=${isAtMinZ}, atMaxZ=${isAtMaxZ}`);
-            console.log(`  -> ${isXY ? 'XY/Mz' : 'XZ/My'} view (after sign correction): Mi=${Mi?.toFixed(2)}, Mj=${Mj?.toFixed(2)}`);
         } else {
             // Horizontal beams (Mz view): keep using local Mz for vertical bending
             Mi = forces.moment_z_i;

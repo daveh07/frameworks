@@ -1,7 +1,7 @@
 import { selectedPlates, createNode, selectedNodes } from './geometry_manager.js';
 import { updateNodeLabels } from './labels_manager.js';
 
-import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js';
+const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js');
 
 /**
  * Generate mesh for selected plates

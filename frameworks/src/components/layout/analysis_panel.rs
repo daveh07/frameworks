@@ -207,19 +207,11 @@ pub fn AnalysisPanel(
                             div { class: "button-row",
                                 button {
                                     class: "diagram-btn",
-                                    title: "Mz: Vertical bending (about local z-axis)",
+                                    title: "Show bending moment diagram in the model plane (2D)",
                                     onclick: move |_| {
                                         eval("window.showFEABendingMomentDiagram()");
                                     },
-                                    "Mz (Vertical)"
-                                }
-                                button {
-                                    class: "diagram-btn",
-                                    title: "My: Horizontal/lateral bending (about local y-axis)",
-                                    onclick: move |_| {
-                                        eval("window.showFEABendingMomentDiagramXZ()");
-                                    },
-                                    "My (Lateral)"
+                                    "Moments"
                                 }
                             }
                             div { class: "control-group-label", "Shear Forces" }

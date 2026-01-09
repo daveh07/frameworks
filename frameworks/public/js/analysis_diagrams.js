@@ -3,7 +3,7 @@
  * Visualizes bending moment, shear force diagrams and deformed shapes
  */
 
-import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js';
+const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js');
 
 // Store analysis results globally
 window.analysisResults = window.analysisResults || null;
