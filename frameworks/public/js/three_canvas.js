@@ -1021,14 +1021,32 @@ function onKeyDown(e) {
  * @param {HTMLCanvasElement} canvas
  */
 function setupResizeObserver(canvas) {
+    const target = canvas.parentElement || canvas;
+
     const resizeObserver = new ResizeObserver(entries => {
+        if (!sceneData || !sceneData.renderer || !sceneData.camera) return;
+
         for (let entry of entries) {
-            const width = entry.contentRect.width;
-            const height = entry.contentRect.height;
-            sceneData.camera.aspect = width / height;
-            sceneData.camera.updateProjectionMatrix();
-            sceneData.renderer.setSize(width, height);
-            
+            const width = Math.max(1, Math.floor(entry.contentRect.width));
+            const height = Math.max(1, Math.floor(entry.contentRect.height));
+
+            // Update camera
+            if (sceneData.camera.isPerspectiveCamera) {
+                sceneData.camera.aspect = width / height;
+                sceneData.camera.updateProjectionMatrix();
+            } else if (sceneData.camera.isOrthographicCamera) {
+                const aspect = width / height;
+                const frustumSize = 30;
+                sceneData.camera.left = (frustumSize * aspect) / -2;
+                sceneData.camera.right = (frustumSize * aspect) / 2;
+                sceneData.camera.top = frustumSize / 2;
+                sceneData.camera.bottom = -frustumSize / 2;
+                sceneData.camera.updateProjectionMatrix();
+            }
+
+            // Update renderer drawing buffer; keep CSS sizing in control
+            sceneData.renderer.setSize(width, height, false);
+
             // Reset mouse tracking on resize
             isDragging = false;
             isPanning = false;
@@ -1037,7 +1055,8 @@ function setupResizeObserver(canvas) {
             }
         }
     });
-    resizeObserver.observe(canvas);
+
+    resizeObserver.observe(target);
 }
 
 /**

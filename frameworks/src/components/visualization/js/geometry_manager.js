@@ -526,42 +526,14 @@ export function deleteSelected(nodesGroup, beamsGroup, platesGroup) {
     });
     selectedBeams.clear();
     
-    // Delete selected nodes and connected beams
+    // Delete selected nodes only (no longer auto-delete connected beams)
     Array.from(selectedNodes).forEach(node => {
         if (!node) return;
         if (node.parent !== nodesGroup) return;
 
-        const nodePos = node.position;
         if (selectionHighlightsGroup) {
             removeNodeSelectionHighlight(selectionHighlightsGroup, node);
         }
-        
-        // Find and remove beams connected to this node
-        const beamsToRemove = [];
-        beamsGroup.children.forEach(beam => {
-            const beamPos = beam.position;
-            const beamLength = beam.geometry.parameters.height || 1;
-            
-            // Calculate beam endpoints
-            const direction = new THREE.Vector3(0, 1, 0);
-            direction.applyQuaternion(beam.quaternion);
-            
-            const endpoint1 = new THREE.Vector3().copy(beamPos).addScaledVector(direction, beamLength / 2);
-            const endpoint2 = new THREE.Vector3().copy(beamPos).addScaledVector(direction, -beamLength / 2);
-            
-            // Check if node is at either endpoint
-            if (endpoint1.distanceTo(nodePos) < 0.1 || endpoint2.distanceTo(nodePos) < 0.1) {
-                beamsToRemove.push(beam);
-            }
-        });
-        
-        beamsToRemove.forEach(beam => {
-            beamsGroup.remove(beam);
-            beam.geometry.dispose();
-            beam.material.dispose();
-            selectedBeams.delete(beam);
-            deletedBeams++;
-        });
         
         // Remove the node
         node.removeFromParent();

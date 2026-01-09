@@ -856,11 +856,11 @@ window.showFEABendingMomentDiagramInternal = function(plane = 'XY') {
     console.log(`Global max moment: ${(globalMaxMoment/1000).toFixed(2)} kNm, tolerance: ${(momentTolerance/1000).toFixed(3)} kNm`);
 
     // Colors for moment diagram
-    // Engineering convention: sagging = positive moment = tension at bottom fiber = blue
-    // Hogging = negative moment = tension at top fiber = red
+    // Hogging = negative moment = tension at top fiber = green
+    // Sagging = positive moment = tension at bottom fiber = blue
     const saggingColor = 0x0066ff;  // Blue for sagging moments (midspan of loaded beams)
-    const hoggingColor = 0xff0000;  // Red for hogging moments (at supports/columns)
-    const columnColor = 0x0066ff;   // Blue for all column moments
+    const hoggingColor = 0x00bd91;  // Green for hogging moments (at supports/columns)
+    const columnColor = 0x00bd91;   // Green for all column moments
 
     // Reconstruct the solver's local axes (same logic as fea-solver/src/math.rs::member_transformation_matrix)
     // and apply member rotation about local x.

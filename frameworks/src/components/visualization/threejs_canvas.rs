@@ -30,11 +30,12 @@ pub fn ThreeJsCanvas() -> Element {
     rsx! {
         div {
             class: "drawing-canvas-container",
-            style: "width: 100%; height: 100vh; display: flex; flex-direction: column; position: relative;",
+            style: "width: 100%; height: 100%; min-height: 0; display: flex; flex-direction: column; position: relative;",
 
             canvas {
                 id: "drawing-canvas",
-                style: "flex: 1; cursor: default; background: #212530; display: block; width: 100%; height: 100%;",
+                class: "threejs-canvas",
+                style: "flex: 1; min-height: 0; cursor: default; background: #212530;",
                 onmounted: move |event| {
                     if let Some(element) = event.data().downcast::<web_sys::Element>() {
                         let element_copy = element.clone();

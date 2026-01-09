@@ -14,6 +14,7 @@ pub mod mesh_panel;
 pub mod beam_properties_panel;
 pub mod shell_properties_panel;
 pub mod material_properties_panel;
+pub mod load_cases_modal;
 
 
 pub use analysis_panel::AnalysisPanel;
@@ -32,3 +33,4 @@ pub use mesh_panel::MeshPanel;
 pub use beam_properties_panel::{BeamPropertiesPanel, BeamProperties};
 pub use shell_properties_panel::{ShellPropertiesPanel, ShellProperties};
 pub use material_properties_panel::{MaterialPropertiesPanel, MaterialProperties};
+pub use load_cases_modal::{LoadCasesModal, LoadCase};

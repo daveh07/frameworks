@@ -5,6 +5,7 @@ use crate::components::visualization::three_bindings::{
     select_all_nodes, clear_node_selection, delete_selected, set_plan_view, reset_view,
 };
 use crate::hooks::use_design_state::{DesignState, ViewMode};
+use crate::components::layout::{LoadCasesModal, LoadCase};
 
 // Clean SVG icons as inline strings
 const ICON_NODE: &str = r#"<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="4"/></svg>"#;
@@ -29,6 +30,7 @@ const ICON_VIEW_3D: &str = r#"<svg viewBox="0 0 24 24" stroke="currentColor" str
 const ICON_ORBIT: &str = r#"<svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" fill="none"><circle cx="12" cy="12" r="8"/><ellipse cx="12" cy="12" rx="8" ry="3"/></svg>"#;
 const ICON_PLAN: &str = r#"<svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" fill="none"><rect x="4" y="4" width="16" height="16" rx="1"/><circle cx="12" cy="12" r="2" fill="currentColor"/></svg>"#;
 const ICON_EXAMPLE: &str = r#"<svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" fill="none"><rect x="4" y="14" width="16" height="6" rx="1"/><rect x="6" y="8" width="12" height="6" rx="1"/><rect x="8" y="2" width="8" height="6" rx="1"/></svg>"#;
+const ICON_LOAD_CASES: &str = r#"<svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" fill="none"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/></svg>"#;
 
 #[component]
 pub fn ViewportToolbar(
@@ -47,6 +49,11 @@ pub fn ViewportToolbar(
     let mut axes_visible = use_signal(|| true);
     let mut active_tool = use_signal(|| "none".to_string());
     let mut selection_filter = use_signal(|| "all".to_string());
+    
+    // Load cases state
+    let mut show_load_cases_modal = use_signal(|| false);
+    let mut load_cases = use_signal(|| vec![LoadCase::default()]);
+    let mut active_load_case = use_signal(|| 1usize);
     
     // Get design state to track view mode
     let design_state = use_context::<DesignState>();
@@ -313,6 +320,34 @@ pub fn ViewportToolbar(
                     div { class: "toolbar-section",
                         span { class: "toolbar-section-label", "Loads" }
                         div { class: "toolbar-section-buttons",
+                            // Load Cases dropdown
+                            select {
+                                class: "load-case-select",
+                                title: "Active Load Case",
+                                value: "{active_load_case}",
+                                onchange: move |e| {
+                                    if let Ok(id) = e.value().parse::<usize>() {
+                                        active_load_case.set(id);
+                                        let js = format!("window.activeLoadCase = {}; console.log('Active load case:', window.activeLoadCase);", id);
+                                        eval(&js);
+                                    }
+                                },
+                                for case in load_cases.read().iter() {
+                                    option {
+                                        value: "{case.id}",
+                                        selected: *active_load_case.read() == case.id,
+                                        "Case {case.id}: {case.title}"
+                                    }
+                                }
+                            }
+                            button {
+                                class: "tool-button-icon",
+                                title: "Manage Load Cases",
+                                onclick: move |_| {
+                                    show_load_cases_modal.set(true);
+                                },
+                                span { class: "btn-icon", dangerous_inner_html: ICON_LOAD_CASES }
+                            }
                             button {
                                 class: "tool-button-icon",
                                 title: "Point Load",
@@ -661,6 +696,13 @@ pub fn ViewportToolbar(
         
         // View options toolbar (labels toggle)
         ViewOptionsToolbar {}
+        
+        // Load Cases Modal
+        LoadCasesModal {
+            show: show_load_cases_modal,
+            load_cases: load_cases,
+            active_case: active_load_case,
+        }
     }
 }
 

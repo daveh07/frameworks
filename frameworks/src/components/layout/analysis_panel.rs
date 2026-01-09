@@ -233,7 +233,7 @@ pub fn AnalysisPanel(
                                     "Reactions"
                                 }
                                 button {
-                                    class: "diagram-btn",
+                                    class: "diagram-btn danger",
                                     onclick: move |_| {
                                         eval("window.clearFEADiagrams()");
                                     },
