@@ -658,15 +658,16 @@ window.showFEADeformedShape = function(scale = 50) {
     });
 
     // Auto-scale: make max displacement visible as fraction of structure size
-    // User scale 1-500 maps to making max deflection 2%-100% of structure size
-    const targetDeflectionRatio = scale / 500; // scale=250 -> 50% of structure
+    // Use logarithmic scaling for smoother control
+    // scale 1 -> 0.5% of structure, scale 250 -> 5%, scale 500 -> 10%
+    const targetDeflectionRatio = 0.005 + (scale / 500) * 0.095; // 0.5% to 10% range
     const autoScale = maxTransDisp > 0 ? (maxDim * targetDeflectionRatio) / maxTransDisp : scale;
-    console.log('Auto-scale factor:', autoScale.toFixed(1), '(maxDim:', maxDim.toFixed(2), 'm)');
+    console.log('Auto-scale factor:', autoScale.toFixed(1), 'target ratio:', (targetDeflectionRatio*100).toFixed(1), '%');
 
     let membersDrawn = 0;
 
-    // Deformed shape color - cyan/teal for good visibility
-    const deformedColor = 0x00cccc;
+    // Deformed shape color - dark teal green
+    const deformedColor = 0x004f3b;
 
     // Draw deformed members using cubic Hermite interpolation for bending
     model.members.forEach(member => {
@@ -813,17 +814,20 @@ window.showFEADeformedShape = function(scale = 50) {
         
         // Create a smooth curve through the points
         const curve = new THREE.CatmullRomCurve3(points);
+        const curvePoints = curve.getPoints(60);
         
-        // Use TubeGeometry for better visibility
-        const tubeRadius = 0.05;
-        const tubeGeometry = new THREE.TubeGeometry(curve, 40, tubeRadius, 8, false);
-        const tubeMaterial = new THREE.MeshBasicMaterial({ 
+        // Use dashed line for deformed shape
+        const lineGeometry = new THREE.BufferGeometry().setFromPoints(curvePoints);
+        const lineMaterial = new THREE.LineDashedMaterial({ 
             color: deformedColor,
-            transparent: false
+            dashSize: 0.15,
+            gapSize: 0.08,
+            linewidth: 2
         });
-        const tube = new THREE.Mesh(tubeGeometry, tubeMaterial);
-        sceneData.scene.add(tube);
-        window.feaDiagramObjects.push(tube);
+        const line = new THREE.Line(lineGeometry, lineMaterial);
+        line.computeLineDistances();  // Required for dashed lines
+        sceneData.scene.add(line);
+        window.feaDiagramObjects.push(line);
 
         membersDrawn++;
     });
