@@ -617,10 +617,9 @@ window.clearFEADiagrams = function() {
 
 // Show deformed shape
 window.showFEADeformedShape = function(scale = 50) {
+    window.clearFEADiagrams();
     window.currentDiagramType = 'deformed';
     window.lastDeformScale = scale;
-    window.clearFEADiagrams();
-    window.currentDiagramType = 'deformed'; // Re-set after clear
     
     const results = window.feaResults;
     const model = window.feaModel;
@@ -634,135 +633,207 @@ window.showFEADeformedShape = function(scale = 50) {
     console.log('Showing deformed shape with scale:', scale);
     console.log('Nodes:', model.nodes.length, 'Displacements:', results.node_displacements.length);
 
-    // Build node displacement map (raw, unscaled)
+    // Build node displacement map with ALL 6 DOFs (translations AND rotations)
     const dispMap = new Map();
+    let maxTransDisp = 0;
     results.node_displacements.forEach(d => {
-        dispMap.set(d.node, { dx: d.dx, dy: d.dy, dz: d.dz, rz: d.rz || 0 });
-        console.log(`Node ${d.node}: dx=${(d.dx*1000).toFixed(3)}mm, dy=${(d.dy*1000).toFixed(3)}mm, dz=${(d.dz*1000).toFixed(3)}mm`);
+        dispMap.set(d.node, { 
+            dx: d.dx, dy: d.dy, dz: d.dz, 
+            rx: d.rx || 0, ry: d.ry || 0, rz: d.rz || 0 
+        });
+        // Only consider translational displacements for scaling (not axial shortening which is tiny)
+        const lateralDisp = Math.sqrt(d.dx*d.dx + d.dy*d.dy);
+        maxTransDisp = Math.max(maxTransDisp, lateralDisp);
+        console.log(`Node ${d.node}: dx=${(d.dx*1000).toFixed(3)}mm, dy=${(d.dy*1000).toFixed(3)}mm, rz=${(d.rz*1000).toFixed(3)}mrad`);
     });
+    
+    console.log('Max lateral displacement:', (maxTransDisp * 1000).toFixed(3), 'mm');
 
     // Build node position map from model
     const nodePos = new Map();
+    let maxDim = 0;
     model.nodes.forEach(n => {
         nodePos.set(n.name, { x: n.x, y: n.y, z: n.z });
+        maxDim = Math.max(maxDim, Math.abs(n.x), Math.abs(n.y), Math.abs(n.z));
     });
 
-    // Build distributed loads map
-    const distLoadsMap = new Map();
-    model.distributed_loads.forEach(load => {
-        if (!distLoadsMap.has(load.member)) {
-            distLoadsMap.set(load.member, []);
-        }
-        distLoadsMap.get(load.member).push(load);
-    });
-
-    // Get material properties (use first material)
-    const mat = model.materials[0] || { e: 200e9 };
-    const E = mat.e;
-
-    // Get section properties (use first section)
-    const sec = model.sections[0] || { iy: 0.001 };
-    const I = sec.iy;
+    // Auto-scale: make max displacement visible as fraction of structure size
+    // User scale 1-500 maps to making max deflection 2%-100% of structure size
+    const targetDeflectionRatio = scale / 500; // scale=250 -> 50% of structure
+    const autoScale = maxTransDisp > 0 ? (maxDim * targetDeflectionRatio) / maxTransDisp : scale;
+    console.log('Auto-scale factor:', autoScale.toFixed(1), '(maxDim:', maxDim.toFixed(2), 'm)');
 
     let membersDrawn = 0;
 
-    // Deformed shape material - bright green
-    const deformedMaterial = new THREE.MeshBasicMaterial({ 
-        color: 0x00ff00, 
-        transparent: true,
-        opacity: 0.9
-    });
+    // Deformed shape color - cyan/teal for good visibility
+    const deformedColor = 0x00cccc;
 
-    // Draw deformed members using tubes for better visibility
+    // Draw deformed members using cubic Hermite interpolation for bending
     model.members.forEach(member => {
         const iPos = nodePos.get(member.i_node);
         const jPos = nodePos.get(member.j_node);
-        const iDisp = dispMap.get(member.i_node) || { dx: 0, dy: 0, dz: 0, rz: 0 };
-        const jDisp = dispMap.get(member.j_node) || { dx: 0, dy: 0, dz: 0, rz: 0 };
+        const iDisp = dispMap.get(member.i_node) || { dx: 0, dy: 0, dz: 0, rx: 0, ry: 0, rz: 0 };
+        const jDisp = dispMap.get(member.j_node) || { dx: 0, dy: 0, dz: 0, rx: 0, ry: 0, rz: 0 };
 
         if (!iPos || !jPos) return;
 
-        const memberLength = Math.sqrt(
-            Math.pow(jPos.x - iPos.x, 2) + 
-            Math.pow(jPos.y - iPos.y, 2) + 
-            Math.pow(jPos.z - iPos.z, 2)
+        // Member direction vector
+        const memberDir = new THREE.Vector3(
+            jPos.x - iPos.x,
+            jPos.y - iPos.y,
+            jPos.z - iPos.z
         );
+        const memberLength = memberDir.length();
+        memberDir.normalize();
+        
+        // Determine if member is primarily vertical (column) or horizontal (beam)
+        const isVertical = Math.abs(memberDir.y) > 0.7;
+        const isHorizontalXY = Math.abs(memberDir.y) < 0.3 && Math.abs(memberDir.z) < 0.3;
+        const isHorizontalXZ = Math.abs(memberDir.y) < 0.3 && Math.abs(memberDir.x) < 0.3;
+        
+        // Get perpendicular directions for bending
+        let perpY, perpZ;
+        if (isVertical) {
+            // Vertical member: bending displaces in X and Z directions
+            perpY = new THREE.Vector3(1, 0, 0);  // X direction
+            perpZ = new THREE.Vector3(0, 0, 1);  // Z direction
+        } else {
+            // Horizontal member: bending displaces in Y direction
+            perpY = new THREE.Vector3(0, 1, 0);  // Y direction (gravity)
+            perpZ = new THREE.Vector3().crossVectors(memberDir, perpY).normalize();
+        }
 
-        // Get distributed load on this member
-        const loads = distLoadsMap.get(member.name) || [];
-        let w = 0;
-        loads.forEach(load => {
-            if (load.direction === 'FY') {
-                w += load.w1;
-            }
-        });
-
-        // Create deformed shape curve with interpolation
-        const segments = 40;
+        // Create deformed shape using cubic Hermite interpolation
+        // The deflection along a beam element follows: v(x) = N1*v1 + N2*θ1*L + N3*v2 + N4*θ2*L
+        // Where N1,N2,N3,N4 are Hermite shape functions
+        const segments = 30;
         const points = [];
 
         for (let i = 0; i <= segments; i++) {
-            const t = i / segments;
-            const x = t * memberLength;
+            const t = i / segments;  // 0 to 1 along member
+            const xi = t;  // Normalized coordinate
             
-            // Linear interpolation of end displacements
-            const dx_ends = iDisp.dx * (1 - t) + jDisp.dx * t;
-            const dy_ends = iDisp.dy * (1 - t) + jDisp.dy * t;
-            const dz_ends = iDisp.dz * (1 - t) + jDisp.dz * t;
+            // Hermite shape functions for cubic interpolation
+            // N1 = 1 - 3ξ² + 2ξ³  (displacement at i)
+            // N2 = ξ - 2ξ² + ξ³   (rotation at i, multiplied by L)
+            // N3 = 3ξ² - 2ξ³      (displacement at j)
+            // N4 = -ξ² + ξ³       (rotation at j, multiplied by L)
+            const N1 = 1 - 3*xi*xi + 2*xi*xi*xi;
+            const N2 = (xi - 2*xi*xi + xi*xi*xi) * memberLength;
+            const N3 = 3*xi*xi - 2*xi*xi*xi;
+            const N4 = (-xi*xi + xi*xi*xi) * memberLength;
             
-            // For simply-supported beam with UDL, add parabolic deflection
-            // δ(x) = (w*x / 24EI) * (L³ - 2Lx² + x³)
-            // Simplified: δ_max at midspan = 5wL⁴/(384EI)
-            let dy_udl = 0;
-            if (Math.abs(w) > 0 && E > 0 && I > 0) {
-                // Check if both ends are supported (near-zero vertical displacement)
-                const bothEndsSupported = Math.abs(iDisp.dy) < 1e-10 && Math.abs(jDisp.dy) < 1e-10;
+            // Base position along undeformed member
+            const baseX = iPos.x + memberDir.x * xi * memberLength;
+            const baseY = iPos.y + memberDir.y * xi * memberLength;
+            const baseZ = iPos.z + memberDir.z * xi * memberLength;
+            
+            // Calculate transverse deflection using Hermite interpolation
+            // For XY plane bending (gravity direction): use dy and rz
+            // For XZ plane bending: use dz and ry
+            
+            let deflection_perpY = 0;
+            let deflection_perpZ = 0;
+            
+            if (isVertical) {
+                // Vertical column: lateral sway in X (from rz rotation) and Z (from ry rotation)
+                // dx is the lateral displacement, rz causes bending in XY plane
+                const dx_i = iDisp.dx;
+                const dx_j = jDisp.dx;
+                const rz_i = -iDisp.rz;  // Rotation causes transverse deflection
+                const rz_j = -jDisp.rz;
                 
-                if (bothEndsSupported) {
-                    // Simply supported deflection shape
-                    const L = memberLength;
-                    dy_udl = (w * x / (24 * E * I)) * (Math.pow(L, 3) - 2 * L * x * x + Math.pow(x, 3));
+                deflection_perpY = N1*dx_i + N2*rz_i + N3*dx_j + N4*rz_j;
+                
+                // Z direction sway
+                const dz_i = iDisp.dz;
+                const dz_j = jDisp.dz;
+                const ry_i = iDisp.ry;
+                const ry_j = jDisp.ry;
+                
+                deflection_perpZ = N1*dz_i + N2*ry_i + N3*dz_j + N4*ry_j;
+                
+            } else {
+                // Horizontal beam: vertical deflection from dy and rotation rz
+                const dy_i = iDisp.dy;
+                const dy_j = jDisp.dy;
+                
+                // For beams, the slope is dv/dx = rotation
+                // Convert global rotation to local slope based on member direction
+                let theta_i, theta_j;
+                
+                if (isHorizontalXY) {
+                    // Beam along X axis: rz rotation gives slope in XY plane
+                    theta_i = iDisp.rz * Math.sign(memberDir.x);
+                    theta_j = jDisp.rz * Math.sign(memberDir.x);
+                } else if (isHorizontalXZ) {
+                    // Beam along Z axis: use different rotation
+                    theta_i = -iDisp.rx * Math.sign(memberDir.z);
+                    theta_j = -jDisp.rx * Math.sign(memberDir.z);
+                } else {
+                    // General case - approximate
+                    theta_i = iDisp.rz;
+                    theta_j = jDisp.rz;
                 }
+                
+                // Cubic Hermite interpolation for vertical deflection
+                deflection_perpY = N1*dy_i + N2*theta_i + N3*dy_j + N4*theta_j;
+                
+                // Horizontal deflection (sway) - linear interpolation is usually sufficient
+                const dx_lin = iDisp.dx * (1 - xi) + jDisp.dx * xi;
+                deflection_perpZ = dx_lin;
             }
             
-            // Base position
-            const baseX = iPos.x * (1 - t) + jPos.x * t;
-            const baseY = iPos.y * (1 - t) + jPos.y * t;
-            const baseZ = iPos.z * (1 - t) + jPos.z * t;
+            // Apply scale to deflections (NOT to axial - columns don't visibly shorten)
+            const scaledDeflY = deflection_perpY * autoScale;
+            const scaledDeflZ = deflection_perpZ * autoScale;
             
-            // Total displacement (scaled)
-            const dx_total = (dx_ends) * scale;
-            const dy_total = (dy_ends + dy_udl) * scale;
-            const dz_total = (dz_ends) * scale;
+            // For axial direction, use very minimal scaling (axial strain is tiny)
+            // Linear interpolation along member axis for axial component
+            let axialDisp = 0;
+            if (isVertical) {
+                // Vertical: axial is in Y direction - but don't exaggerate it
+                axialDisp = (iDisp.dy * (1 - xi) + jDisp.dy * xi) * autoScale * 0.1;
+            }
             
-            points.push(new THREE.Vector3(
-                baseX + dx_total, 
-                baseY + dy_total, 
-                baseZ + dz_total
-            ));
+            // Final position
+            let finalX, finalY, finalZ;
+            if (isVertical) {
+                finalX = baseX + scaledDeflY;  // X sway
+                finalY = baseY + axialDisp;    // Minimal axial
+                finalZ = baseZ + scaledDeflZ;  // Z sway
+            } else {
+                finalX = baseX + scaledDeflZ * perpZ.x;  // Horizontal sway
+                finalY = baseY + scaledDeflY;            // Vertical deflection
+                finalZ = baseZ + scaledDeflZ * perpZ.z;
+            }
+            
+            points.push(new THREE.Vector3(finalX, finalY, finalZ));
         }
         
-        // Create tube geometry along the deformed curve path
+        // Create a smooth curve through the points
         const curve = new THREE.CatmullRomCurve3(points);
-        const tubeGeometry = new THREE.TubeGeometry(curve, 40, 0.03, 8, false);
-        const tubeMesh = new THREE.Mesh(tubeGeometry, deformedMaterial);
-        sceneData.scene.add(tubeMesh);
-        window.feaDiagramObjects.push(tubeMesh);
-        membersDrawn++;
+        
+        // Use TubeGeometry for better visibility
+        const tubeRadius = 0.05;
+        const tubeGeometry = new THREE.TubeGeometry(curve, 40, tubeRadius, 8, false);
+        const tubeMaterial = new THREE.MeshBasicMaterial({ 
+            color: deformedColor,
+            transparent: false
+        });
+        const tube = new THREE.Mesh(tubeGeometry, tubeMaterial);
+        sceneData.scene.add(tube);
+        window.feaDiagramObjects.push(tube);
 
-        // Calculate and log max deflection
-        let maxDefl = 0;
-        if (Math.abs(w) > 0 && E > 0 && I > 0) {
-            maxDefl = 5 * Math.abs(w) * Math.pow(memberLength, 4) / (384 * E * I);
-        }
-        console.log(`Member ${member.name}: w=${w} N/m, L=${memberLength.toFixed(2)}m, maxDefl=${(maxDefl*1000).toFixed(2)} mm`);
+        membersDrawn++;
     });
 
     console.log('Deformed members drawn:', membersDrawn);
 
-    // Draw deformed node markers
-    const nodeGeometry = new THREE.SphereGeometry(0.1, 16, 16);
-    const nodeMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+    // Draw deformed node markers - small cyan spheres at displaced positions
+    // Only show lateral/transverse displacements, not axial shortening
+    const nodeGeometry = new THREE.SphereGeometry(0.1, 12, 12);
+    const nodeMaterial = new THREE.MeshBasicMaterial({ color: deformedColor });
     
     model.nodes.forEach(node => {
         const pos = nodePos.get(node.name);
@@ -770,49 +841,60 @@ window.showFEADeformedShape = function(scale = 50) {
         
         if (pos) {
             const marker = new THREE.Mesh(nodeGeometry, nodeMaterial);
+            // Show horizontal (sway) displacements at full scale
+            // For vertical displacement, check if node is at base (fixed) - don't move it
+            const isBaseNode = Math.abs(pos.y) < 0.01;  // At ground level
+            
             marker.position.set(
-                pos.x + disp.dx * scale, 
-                pos.y + disp.dy * scale, 
-                pos.z + disp.dz * scale
+                pos.x + disp.dx * autoScale, 
+                isBaseNode ? pos.y : pos.y + disp.dy * autoScale,  // Don't move base nodes vertically
+                pos.z + disp.dz * autoScale
             );
             sceneData.scene.add(marker);
             window.feaDiagramObjects.push(marker);
         }
     });
 
-    // Add max deflection label
+    // Add deflection labels at midspan of horizontal beams
     model.members.forEach(member => {
         const iPos = nodePos.get(member.i_node);
         const jPos = nodePos.get(member.j_node);
         if (!iPos || !jPos) return;
         
-        const midX = (iPos.x + jPos.x) / 2;
-        const midY = (iPos.y + jPos.y) / 2;
-        const midZ = (iPos.z + jPos.z) / 2;
+        // Check if this is a horizontal beam (not a column)
+        const memberDir = new THREE.Vector3(
+            jPos.x - iPos.x,
+            jPos.y - iPos.y,
+            jPos.z - iPos.z
+        );
+        const isVertical = Math.abs(memberDir.y / memberDir.length()) > 0.7;
+        if (isVertical) return;  // Only label horizontal beams
         
-        const loads = distLoadsMap.get(member.name) || [];
-        let w = 0;
-        loads.forEach(load => {
-            if (load.direction === 'FY') w += load.w1;
-        });
+        const iDisp = dispMap.get(member.i_node) || { dx: 0, dy: 0, dz: 0, rz: 0 };
+        const jDisp = dispMap.get(member.j_node) || { dx: 0, dy: 0, dz: 0, rz: 0 };
         
-        if (Math.abs(w) > 0 && E > 0 && I > 0) {
-            const L = Math.sqrt(
-                Math.pow(jPos.x - iPos.x, 2) + 
-                Math.pow(jPos.y - iPos.y, 2) + 
-                Math.pow(jPos.z - iPos.z, 2)
-            );
-            const maxDefl = 5 * Math.abs(w) * Math.pow(L, 4) / (384 * E * I);
-            addDiagramLabel(
-                new THREE.Vector3(midX, midY - maxDefl * scale - 0.5, midZ),
-                `δmax=${(maxDefl*1000).toFixed(2)} mm`,
-                sceneData
-            );
+        // Use Hermite interpolation to find midspan deflection
+        const L = memberDir.length();
+        const xi = 0.5;  // Midspan
+        const N1 = 1 - 3*xi*xi + 2*xi*xi*xi;
+        const N2 = (xi - 2*xi*xi + xi*xi*xi) * L;
+        const N3 = 3*xi*xi - 2*xi*xi*xi;
+        const N4 = (-xi*xi + xi*xi*xi) * L;
+        
+        const midDefl = N1*iDisp.dy + N2*iDisp.rz + N3*jDisp.dy + N4*jDisp.rz;
+        
+        if (Math.abs(midDefl) > 1e-6) {
+            const midX = (iPos.x + jPos.x) / 2 + (iDisp.dx + jDisp.dx) / 2 * autoScale;
+            const midY = (iPos.y + jPos.y) / 2 + midDefl * autoScale - 0.3;
+            const midZ = (iPos.z + jPos.z) / 2;
+            
+            const labelPos = new THREE.Vector3(midX, midY, midZ);
+            addDiagramLabelClean(labelPos, `δ=${(Math.abs(midDefl)*1000).toFixed(2)}mm`, sceneData);
         }
     });
 
     if (window.addSolverLog) {
-        window.addSolverLog(`Deformed shape displayed (scale: ${scale}x)`, 'info');
+        window.addSolverLog(`Deformed shape displayed (scale: ${scale}x, auto-factor: ${autoScale.toFixed(0)})`, 'info');
     }
 };
 
@@ -1049,22 +1131,12 @@ window.showFEABendingMomentDiagramInternal = function(plane = 'XY', clearFirst =
             const isEdgeColumnX = isAtMinX || isAtMaxX;
             const isEdgeColumnZ = isAtMinZ || isAtMaxZ;
             
-            // Filter members based on view:
-            // - XY (Mz) view: show columns that participate in the XY frames (edge columns in X).
-            // - XZ (My) view: show ONLY corner columns (edge in X and edge in Z).
-            if (isXY) {
-                if (isVertical && !isEdgeColumnX) {
-                    console.log(`Member ${member.name}: skipping middle-X column in Mz view`);
-                    return;
-                }
-            } else {
-                // My view: only corner columns (matches SpaceGASS symmetric behavior)
+            // For 3D structures, show ALL columns in both views since they all have biaxial bending
+            // Only filter beams: XY view shows all beams, XZ view shows no beams (only column out-of-plane moments)
+            if (!isXY) {
+                // My view (XZ plane): only show columns (vertical members), not beams
                 if (!isVertical) {
                     console.log(`Member ${member.name}: skipping beam in My view`);
-                    return;
-                }
-                if (!(isEdgeColumnX && isEdgeColumnZ)) {
-                    console.log(`Member ${member.name}: skipping non-corner column in My view`);
                     return;
                 }
             }
@@ -1587,7 +1659,7 @@ window.showFEAShearForceDiagramXZ = function() {
     window.showFEAShearForceDiagramInternal('XZ');
 };
 
-// Show axial force diagram
+// Show axial force diagram - similar style to shear force diagram
 window.showFEAAxialForceDiagram = function() {
     window.currentDiagramType = 'axial';
     window.clearFEADiagrams();
@@ -1615,74 +1687,115 @@ window.showFEAAxialForceDiagram = function() {
     });
 
     // Find max axial force for scaling
-    let maxAxial = 0;
+    let maxAxial = 0.1;
     results.member_forces.forEach(f => {
         maxAxial = Math.max(maxAxial, Math.abs(f.axial_i));
     });
     console.log('Max axial force:', (maxAxial/1000).toFixed(2), 'kN');
 
+    // Colors - dark red for compression, dark blue for tension
+    const compressionColor = 0x990000;  // Dark red
+    const tensionColor = 0x000099;      // Dark blue
+
     let diagramsCreated = 0;
 
-    // Draw axial force as colored cylinders (tubes) for visibility
+    // Draw axial force diagram similar to shear force (filled shape offset from member)
     model.members.forEach(member => {
         const forces = forcesMap.get(member.name);
-        if (!forces) {
-            console.log(`Member ${member.name}: no forces`);
-            return;
-        }
+        if (!forces) return;
 
         const iPos = nodePos.get(member.i_node);
         const jPos = nodePos.get(member.j_node);
-        if (!iPos || !jPos) {
-            console.log(`Member ${member.name}: missing nodes`);
-            return;
-        }
+        if (!iPos || !jPos) return;
 
-        const axial = forces.axial_i;
+        const axial = forces.axial_i;  // Axial force is constant along member
         
-        // Skip negligible forces (< 1% of max)
-        if (Math.abs(axial) < maxAxial * 0.01 && maxAxial > 0) {
-            return;
-        }
-        
-        // Color: red for compression (negative), blue for tension (positive)
-        const color = axial < 0 ? 0xff3333 : 0x3366ff;
-        
-        // Calculate member length and direction
+        // Skip negligible forces
+        if (Math.abs(axial) < maxAxial * 0.01) return;
+
+        // Calculate member properties
         const direction = new THREE.Vector3().subVectors(jPos, iPos);
         const length = direction.length();
         direction.normalize();
         
-        // Create a cylinder (tube) along the member
-        // Thickness proportional to force magnitude (min 0.05, max 0.15)
-        const thickness = 0.05 + 0.10 * Math.abs(axial) / (maxAxial || 1);
-        const cylinderGeom = new THREE.CylinderGeometry(thickness, thickness, length, 8);
-        const cylinderMat = new THREE.MeshBasicMaterial({ 
-            color: color,
+        // Get perpendicular direction (for offset)
+        const isVertical = Math.abs(direction.y) > 0.9;
+        let perpDir;
+        if (isVertical) {
+            // For vertical members, offset in X direction
+            perpDir = new THREE.Vector3(1, 0, 0);
+        } else {
+            // For horizontal members, offset upward (Y)
+            perpDir = new THREE.Vector3(0, 1, 0);
+        }
+        
+        // Scale the axial force for visualization
+        // Use 15% of member length for max force
+        const baseScale = (length * 0.15) / maxAxial;
+        const userScale = window.diagramScale || 1.0;
+        const diagramScale = baseScale * userScale;
+        
+        // Axial force is constant, so create a rectangle
+        const offset = axial * diagramScale;
+        const color = axial < 0 ? compressionColor : tensionColor;
+        
+        // Create filled rectangle shape
+        const geometry = new THREE.BufferGeometry();
+        const positions = [];
+        const colors = [];
+        const colorObj = new THREE.Color(color);
+        
+        // 4 corners of the rectangle
+        const p1 = iPos.clone();  // base start
+        const p2 = jPos.clone();  // base end
+        const p3 = jPos.clone().add(perpDir.clone().multiplyScalar(offset));  // offset end
+        const p4 = iPos.clone().add(perpDir.clone().multiplyScalar(offset));  // offset start
+        
+        // Two triangles to make the rectangle
+        positions.push(
+            p1.x, p1.y, p1.z,
+            p4.x, p4.y, p4.z,
+            p3.x, p3.y, p3.z
+        );
+        positions.push(
+            p1.x, p1.y, p1.z,
+            p3.x, p3.y, p3.z,
+            p2.x, p2.y, p2.z
+        );
+        
+        for (let j = 0; j < 6; j++) {
+            colors.push(colorObj.r, colorObj.g, colorObj.b);
+        }
+        
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+        
+        const material = new THREE.MeshBasicMaterial({ 
+            vertexColors: true,
+            side: THREE.DoubleSide,
             transparent: true,
-            opacity: 0.7
+            opacity: 0.5,
+            depthWrite: false
         });
         
-        const cylinder = new THREE.Mesh(cylinderGeom, cylinderMat);
+        const mesh = new THREE.Mesh(geometry, material);
+        sceneData.scene.add(mesh);
+        window.feaDiagramObjects.push(mesh);
         
-        // Position at midpoint
-        const midPoint = new THREE.Vector3().addVectors(iPos, jPos).multiplyScalar(0.5);
-        cylinder.position.copy(midPoint);
+        // Draw outline
+        const outlineGeometry = new THREE.BufferGeometry().setFromPoints([p1, p4, p3, p2, p1]);
+        const outlineMaterial = new THREE.LineBasicMaterial({ color: color, linewidth: 2 });
+        const outline = new THREE.Line(outlineGeometry, outlineMaterial);
+        sceneData.scene.add(outline);
+        window.feaDiagramObjects.push(outline);
         
-        // Orient along member (cylinder default is Y-axis)
-        const up = new THREE.Vector3(0, 1, 0);
-        const quaternion = new THREE.Quaternion().setFromUnitVectors(up, direction);
-        cylinder.quaternion.copy(quaternion);
-        
-        sceneData.scene.add(cylinder);
-        window.feaDiagramObjects.push(cylinder);
         diagramsCreated++;
 
         // Add label at midpoint
-        const labelOffset = new THREE.Vector3(0, 0.3, 0);
-        const labelPos = midPoint.clone().add(labelOffset);
-        const label = axial < 0 ? `C=${(-axial/1000).toFixed(1)} kN` : `T=${(axial/1000).toFixed(1)} kN`;
-        addDiagramLabel(labelPos, label, sceneData);
+        const midPoint = new THREE.Vector3().addVectors(iPos, jPos).multiplyScalar(0.5);
+        const labelPos = midPoint.clone().add(perpDir.clone().multiplyScalar(offset + 0.2));
+        const label = axial < 0 ? `C=${(-axial/1000).toFixed(1)}` : `T=${(axial/1000).toFixed(1)}`;
+        addDiagramLabelClean(labelPos, label, sceneData);
     });
 
     console.log('Axial diagrams created:', diagramsCreated);
@@ -1695,6 +1808,7 @@ window.showFEAAxialForceDiagram = function() {
 // Show reactions
 window.showFEAReactions = function(scale = 0.001) {
     window.clearFEADiagrams();
+    window.currentDiagramType = 'reactions';
     
     const results = window.feaResults;
     const model = window.feaModel;
@@ -1712,62 +1826,86 @@ window.showFEAReactions = function(scale = 0.001) {
         nodePos.set(n.name, new THREE.Vector3(n.x, n.y, n.z));
     });
 
-    // Auto-scale based on max reaction value
+    // Auto-scale based on max reaction value - make arrows more visible
     let maxReaction = 0;
     results.reactions.forEach(r => {
         maxReaction = Math.max(maxReaction, Math.abs(r.fx), Math.abs(r.fy), Math.abs(r.fz));
     });
-    const autoScale = maxReaction > 0 ? 1.5 / maxReaction : 0.001;
+    // Larger scale factor for more visible arrows (2.5 instead of 1.5)
+    const autoScale = maxReaction > 0 ? 2.5 / maxReaction : 0.001;
+    
+    // Build reactions summary for console/log
+    const reactionsSummary = [];
 
     results.reactions.forEach(reaction => {
         const pos = nodePos.get(reaction.node);
         if (!pos) return;
 
-        // Reaction component data with colors
+        // Reaction component data with brighter, more visible colors
         const reactions = [
-            { dir: new THREE.Vector3(1, 0, 0), value: reaction.fx, label: 'Rx', color: 0xff4444 },
-            { dir: new THREE.Vector3(0, 1, 0), value: reaction.fy, label: 'Ry', color: 0x44ff44 },
-            { dir: new THREE.Vector3(0, 0, 1), value: reaction.fz, label: 'Rz', color: 0x4444ff }
+            { dir: new THREE.Vector3(1, 0, 0), value: reaction.fx, label: 'Rx', color: 0xff0000 }, // Bright red
+            { dir: new THREE.Vector3(0, 1, 0), value: reaction.fy, label: 'Ry', color: 0x00ff00 }, // Bright green  
+            { dir: new THREE.Vector3(0, 0, 1), value: reaction.fz, label: 'Rz', color: 0x0088ff }  // Bright blue
         ];
 
-        let labelOffset = 0;
         const labelParts = [];
+        const summaryParts = [];
 
         reactions.forEach(r => {
             const absVal = Math.abs(r.value);
             if (absVal > 1) { // Only show significant reactions
-                const arrowLength = absVal * autoScale;
+                const arrowLength = Math.max(0.5, absVal * autoScale); // Minimum arrow length of 0.5
                 const arrowDir = r.dir.clone().multiplyScalar(r.value > 0 ? 1 : -1);
                 
                 // Arrow starts from below the support and points toward the structure
                 const arrowStart = pos.clone().sub(arrowDir.clone().multiplyScalar(arrowLength));
+                
+                // Create arrow with larger head for visibility
+                const headLength = Math.max(0.15, arrowLength * 0.25);
+                const headWidth = Math.max(0.1, arrowLength * 0.15);
                 
                 const arrow = new THREE.ArrowHelper(
                     arrowDir.clone().normalize(), 
                     arrowStart, 
                     arrowLength,
                     r.color,
-                    arrowLength * 0.15,
-                    arrowLength * 0.08
+                    headLength,
+                    headWidth
                 );
+                
+                // Make the arrow line thicker by replacing with cylinder
+                arrow.line.material.linewidth = 3;
+                
                 sceneData.scene.add(arrow);
                 window.feaDiagramObjects.push(arrow);
                 
                 // Collect label info
                 const valueKn = r.value / 1000;
-                labelParts.push(`${r.label}=${valueKn.toFixed(1)} kN`);
+                labelParts.push(`${r.label}=${valueKn.toFixed(1)}`);
+                summaryParts.push(`${r.label}=${valueKn.toFixed(2)} kN`);
             }
         });
 
         // Add combined label below the support
         if (labelParts.length > 0) {
-            const labelText = `${reaction.node}: ${labelParts.join(', ')}`;
-            addDiagramLabel(pos.clone().add(new THREE.Vector3(0, -0.7, 0)), labelText, sceneData);
+            const labelText = labelParts.join(', ');
+            addDiagramLabelClean(pos.clone().add(new THREE.Vector3(0, -0.8, 0)), labelText, sceneData);
+            
+            // Add to summary
+            reactionsSummary.push(`${reaction.node}: ${summaryParts.join(', ')}`);
         }
     });
 
+    // Log reactions summary
+    console.log('=== REACTIONS SUMMARY ===');
+    reactionsSummary.forEach(line => console.log(line));
+    console.log('========================');
+    
     if (window.addSolverLog) {
-        window.addSolverLog('Reactions displayed with labels', 'info');
+        window.addSolverLog('Reactions displayed:', 'info');
+        reactionsSummary.forEach(line => {
+            window.addSolverLog(`  ${line}`, 'info');
+        });
     }
 };
 

@@ -178,6 +178,8 @@ pub fn AnalysisPanel(
                                 oninput: move |evt| {
                                     if let Ok(v) = evt.value().parse::<f64>() {
                                         deform_scale.set(v);
+                                        // If deformed shape is currently displayed, refresh it with new scale
+                                        eval(&format!("if (window.currentDiagramType === 'deformed') {{ window.showFEADeformedShape({}); }}", v));
                                     }
                                 }
                             }

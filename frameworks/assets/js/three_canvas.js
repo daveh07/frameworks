@@ -155,6 +155,20 @@ export async function init_three_canvas(canvas) {
         }
     };
     
+    // Expose supports visibility toggle
+    window.toggleSupportsVisibility = (visible) => {
+        // Toggle constraint symbols visibility
+        if (window.constraintSymbols) {
+            window.constraintSymbols.forEach((symbol) => {
+                if (symbol) symbol.visible = visible;
+            });
+        }
+        // Also toggle the constraint symbols group if it exists
+        if (sceneData && sceneData.constraintSymbolsGroup) {
+            sceneData.constraintSymbolsGroup.visible = visible;
+        }
+    };
+    
     window.addPointLoad = addPointLoad;
     window.addDistributedLoad = addDistributedLoad;
     window.generateMesh = generateMesh;

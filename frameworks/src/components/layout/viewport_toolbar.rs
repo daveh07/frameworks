@@ -715,6 +715,7 @@ fn ViewOptionsToolbar() -> Element {
     let mut wireframe_mode = use_signal(|| true); // true = wireframe, false = solid
     let mut nodes_visible = use_signal(|| true); // nodes visible by default
     let mut releases_visible = use_signal(|| true); // member releases visible by default
+    let mut supports_visible = use_signal(|| true); // supports visible by default
     
     rsx! {
         div { class: "view-options-toolbar",
@@ -737,6 +738,16 @@ fn ViewOptionsToolbar() -> Element {
                     eval(&format!("if (window.toggleNodesVisibility) window.toggleNodesVisibility({});", new_val));
                 },
                 "●"
+            }
+            button {
+                class: if supports_visible() { "view-option-btn active" } else { "view-option-btn" },
+                title: "Toggle Supports Visibility",
+                onclick: move |_| {
+                    let new_val = !supports_visible();
+                    supports_visible.set(new_val);
+                    eval(&format!("if (window.toggleSupportsVisibility) window.toggleSupportsVisibility({});", new_val));
+                },
+                "▲"
             }
             button {
                 class: if show_beam_labels() { "view-option-btn active" } else { "view-option-btn" },

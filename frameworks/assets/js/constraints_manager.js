@@ -9,6 +9,9 @@ import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.m
 // Store constraint symbols for each node
 const constraintSymbols = new Map(); // nodeId -> constraint mesh group
 
+// Expose globally for visibility toggle
+window.constraintSymbols = constraintSymbols;
+
 // Get selectedNodes from global (set by three_canvas.js) to avoid module instance issues
 function getSelectedNodes() {
     return window.selectedNodes || new Set();
@@ -257,8 +260,8 @@ function createFixedSymbol() {
         depthTest: true
     });
     const sprite = new THREE.Sprite(spriteMaterial);
-    sprite.scale.set(0.6, 0.6, 1);
-    sprite.position.y = -0.25;
+    sprite.scale.set(0.9, 0.9, 1); // 1.5x larger (was 0.6)
+    sprite.position.y = -0.35; // Adjust position for larger size
     
     group.add(sprite);
     
@@ -399,51 +402,21 @@ function createRollerSymbol(freeDOF) {
 }
 
 /**
- * Create custom support symbol (Black X)
+ * Create custom support symbol (Blue smooth cone)
  * @returns {THREE.Group}
  */
 function createCustomSymbol() {
     const group = new THREE.Group();
+    const color = 0x3399ff; // Blue color
     
-    // Create canvas for 2D drawing
-    const canvas = document.createElement('canvas');
-    const size = 256;
-    canvas.width = size;
-    canvas.height = size;
-    const ctx = canvas.getContext('2d');
-    
-    // Clear canvas
-    ctx.clearRect(0, 0, size, size);
-    
-    // Draw Black X
-    ctx.strokeStyle = '#000000';
-    ctx.lineWidth = 25;
-    ctx.lineCap = 'round';
-    
-    const padding = size * 0.2;
-    
-    ctx.beginPath();
-    ctx.moveTo(padding, padding);
-    ctx.lineTo(size - padding, size - padding);
-    ctx.stroke();
-    
-    ctx.beginPath();
-    ctx.moveTo(size - padding, padding);
-    ctx.lineTo(padding, size - padding);
-    ctx.stroke();
-    
-    // Create sprite from canvas
-    const texture = new THREE.CanvasTexture(canvas);
-    const spriteMaterial = new THREE.SpriteMaterial({ 
-        map: texture,
-        transparent: true,
-        depthTest: false // Always visible on top
+    // Create smooth 3D cone (16 sides for round appearance)
+    const coneGeometry = new THREE.ConeGeometry(0.25, 0.4, 16);
+    const coneMaterial = new THREE.MeshBasicMaterial({ 
+        color: color
     });
-    const sprite = new THREE.Sprite(spriteMaterial);
-    sprite.scale.set(0.4, 0.4, 1);
-    sprite.position.y = 0; // On the node
-    
-    group.add(sprite);
+    const cone = new THREE.Mesh(coneGeometry, coneMaterial);
+    cone.position.y = -0.2;
+    group.add(cone);
     
     return group;
 }
