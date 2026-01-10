@@ -658,11 +658,10 @@ window.showFEADeformedShape = function(scale = 50) {
     });
 
     // Auto-scale: make max displacement visible as fraction of structure size
-    // Use logarithmic scaling for smoother control
-    // scale 1 -> 0.5% of structure, scale 250 -> 5%, scale 500 -> 10%
-    const targetDeflectionRatio = 0.005 + (scale / 500) * 0.095; // 0.5% to 10% range
+    // Very gentle scaling - scale 1 -> 0.1%, scale 500 -> 2%
+    const targetDeflectionRatio = 0.001 + (scale / 500) * 0.019; // 0.1% to 2% range
     const autoScale = maxTransDisp > 0 ? (maxDim * targetDeflectionRatio) / maxTransDisp : scale;
-    console.log('Auto-scale factor:', autoScale.toFixed(1), 'target ratio:', (targetDeflectionRatio*100).toFixed(1), '%');
+    console.log('Auto-scale factor:', autoScale.toFixed(1), 'target ratio:', (targetDeflectionRatio*100).toFixed(2), '%');
 
     let membersDrawn = 0;
 
@@ -814,20 +813,17 @@ window.showFEADeformedShape = function(scale = 50) {
         
         // Create a smooth curve through the points
         const curve = new THREE.CatmullRomCurve3(points);
-        const curvePoints = curve.getPoints(60);
         
-        // Use dashed line for deformed shape
-        const lineGeometry = new THREE.BufferGeometry().setFromPoints(curvePoints);
-        const lineMaterial = new THREE.LineDashedMaterial({ 
+        // Use thin tube for solid highlighted deformed shape
+        const tubeRadius = 0.025;
+        const tubeGeometry = new THREE.TubeGeometry(curve, 40, tubeRadius, 6, false);
+        const tubeMaterial = new THREE.MeshBasicMaterial({ 
             color: deformedColor,
-            dashSize: 0.15,
-            gapSize: 0.08,
-            linewidth: 2
+            transparent: false
         });
-        const line = new THREE.Line(lineGeometry, lineMaterial);
-        line.computeLineDistances();  // Required for dashed lines
-        sceneData.scene.add(line);
-        window.feaDiagramObjects.push(line);
+        const tube = new THREE.Mesh(tubeGeometry, tubeMaterial);
+        sceneData.scene.add(tube);
+        window.feaDiagramObjects.push(tube);
 
         membersDrawn++;
     });
