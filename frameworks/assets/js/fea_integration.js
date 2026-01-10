@@ -1923,7 +1923,6 @@ function addMultiLineLabelClean(position, text, sceneData) {
     sceneData.scene.add(sprite);
     window.feaDiagramObjects.push(sprite);
 }
-}
 
 // Legacy label function (keeping for compatibility)
 function addDiagramLabel(position, text, sceneData) {
