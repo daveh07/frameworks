@@ -658,15 +658,15 @@ window.showFEADeformedShape = function(scale = 50) {
     });
 
     // Auto-scale: make max displacement visible as fraction of structure size
-    // Very gentle scaling - scale 1 -> 0.1%, scale 500 -> 2%
-    const targetDeflectionRatio = 0.001 + (scale / 500) * 0.019; // 0.1% to 2% range
+    // Scale 0-50 maps linearly: scale 0 -> 0%, scale 10 -> 2%, scale 50 -> 10%
+    const targetDeflectionRatio = (scale / 50) * 0.10; // 0% to 10% range
     const autoScale = maxTransDisp > 0 ? (maxDim * targetDeflectionRatio) / maxTransDisp : scale;
     console.log('Auto-scale factor:', autoScale.toFixed(1), 'target ratio:', (targetDeflectionRatio*100).toFixed(2), '%');
 
     let membersDrawn = 0;
 
-    // Deformed shape color - dark teal green
-    const deformedColor = 0x004f3b;
+    // Deformed shape color - teal green
+    const deformedColor = 0x00f0b3;
 
     // Draw deformed members using cubic Hermite interpolation for bending
     model.members.forEach(member => {

@@ -22,7 +22,7 @@ pub fn AnalysisPanel(
     let mut max_reaction = use_signal(|| 0.0_f64);
     
     // Deformation scale
-    let mut deform_scale = use_signal(|| 50.0_f64);
+    let mut deform_scale = use_signal(|| 10.0_f64);
 
     let run_fea_analysis = move |_| {
         spawn(async move {
@@ -167,13 +167,13 @@ pub fn AnalysisPanel(
                         
                         // Deformation Scale Slider
                         div { class: "control-row",
-                            label { "Deform Scale: {deform_scale():.0}x" }
+                            label { "Deform Scale: {deform_scale():.1}x" }
                             input {
                                 r#type: "range",
                                 class: "scale-slider",
-                                min: "1",
-                                max: "500",
-                                step: "1",
+                                min: "0",
+                                max: "50",
+                                step: "0.5",
                                 value: "{deform_scale}",
                                 oninput: move |evt| {
                                     if let Ok(v) = evt.value().parse::<f64>() {
