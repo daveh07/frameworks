@@ -665,10 +665,10 @@ window.showFEADeformedShape = function(scale = 50) {
 
     let membersDrawn = 0;
 
-    // Deformed shape color - teal green
-    const deformedColor = 0x00f0b3;
+    // Deformed shape color - maroon
+    const deformedColor = 0x8c0126;
 
-    // Draw deformed members using cubic Hermite interpolation for bending
+    // Draw deformed members - ensure endpoints match exactly at displaced node positions
     model.members.forEach(member => {
         const iPos = nodePos.get(member.i_node);
         const jPos = nodePos.get(member.j_node);
@@ -677,7 +677,19 @@ window.showFEADeformedShape = function(scale = 50) {
 
         if (!iPos || !jPos) return;
 
-        // Member direction vector
+        // Displaced node positions (these MUST be the endpoints for continuity)
+        const iDeformed = new THREE.Vector3(
+            iPos.x + iDisp.dx * autoScale,
+            iPos.y + iDisp.dy * autoScale,
+            iPos.z + iDisp.dz * autoScale
+        );
+        const jDeformed = new THREE.Vector3(
+            jPos.x + jDisp.dx * autoScale,
+            jPos.y + jDisp.dy * autoScale,
+            jPos.z + jDisp.dz * autoScale
+        );
+
+        // Member direction vector (original)
         const memberDir = new THREE.Vector3(
             jPos.x - iPos.x,
             jPos.y - iPos.y,
@@ -686,129 +698,68 @@ window.showFEADeformedShape = function(scale = 50) {
         const memberLength = memberDir.length();
         memberDir.normalize();
         
-        // Determine if member is primarily vertical (column) or horizontal (beam)
+        // Determine member orientation
         const isVertical = Math.abs(memberDir.y) > 0.7;
-        const isHorizontalXY = Math.abs(memberDir.y) < 0.3 && Math.abs(memberDir.z) < 0.3;
-        const isHorizontalXZ = Math.abs(memberDir.y) < 0.3 && Math.abs(memberDir.x) < 0.3;
         
-        // Get perpendicular directions for bending
-        let perpY, perpZ;
+        // Get perpendicular direction for bending
+        let perpDir;
         if (isVertical) {
-            // Vertical member: bending displaces in X and Z directions
-            perpY = new THREE.Vector3(1, 0, 0);  // X direction
-            perpZ = new THREE.Vector3(0, 0, 1);  // Z direction
+            // Vertical member: bending perpendicular is in XZ plane
+            perpDir = new THREE.Vector3(1, 0, 0);
         } else {
-            // Horizontal member: bending displaces in Y direction
-            perpY = new THREE.Vector3(0, 1, 0);  // Y direction (gravity)
-            perpZ = new THREE.Vector3().crossVectors(memberDir, perpY).normalize();
+            // Horizontal member: bending perpendicular is Y (vertical)
+            perpDir = new THREE.Vector3(0, 1, 0);
         }
-
-        // Create deformed shape using cubic Hermite interpolation
-        // The deflection along a beam element follows: v(x) = N1*v1 + N2*θ1*L + N3*v2 + N4*θ2*L
-        // Where N1,N2,N3,N4 are Hermite shape functions
-        const segments = 30;
+        
+        // Create deformed shape with cubic bending between the fixed endpoints
+        // Use cubic Hermite interpolation for the TRANSVERSE bending only
+        // Endpoints are FIXED to displaced node positions
+        const segments = 20;
         const points = [];
 
         for (let i = 0; i <= segments; i++) {
             const t = i / segments;  // 0 to 1 along member
-            const xi = t;  // Normalized coordinate
             
-            // Hermite shape functions for cubic interpolation
-            // N1 = 1 - 3ξ² + 2ξ³  (displacement at i)
-            // N2 = ξ - 2ξ² + ξ³   (rotation at i, multiplied by L)
-            // N3 = 3ξ² - 2ξ³      (displacement at j)
-            // N4 = -ξ² + ξ³       (rotation at j, multiplied by L)
-            const N1 = 1 - 3*xi*xi + 2*xi*xi*xi;
-            const N2 = (xi - 2*xi*xi + xi*xi*xi) * memberLength;
-            const N3 = 3*xi*xi - 2*xi*xi*xi;
-            const N4 = (-xi*xi + xi*xi*xi) * memberLength;
+            // Linear interpolation gives the straight line between displaced endpoints
+            const linearPos = new THREE.Vector3().lerpVectors(iDeformed, jDeformed, t);
             
-            // Base position along undeformed member
-            const baseX = iPos.x + memberDir.x * xi * memberLength;
-            const baseY = iPos.y + memberDir.y * xi * memberLength;
-            const baseZ = iPos.z + memberDir.z * xi * memberLength;
+            // Add bending curvature based on end rotations
+            // The cubic shape adds deflection perpendicular to the member
+            // Shape function for internal bending: peaks at midspan, zero at ends
+            // Using: f(t) = 4*t*(1-t) for parabolic, or cubic Hermite for rotation-based
             
-            // Calculate transverse deflection using Hermite interpolation
-            // For XY plane bending (gravity direction): use dy and rz
-            // For XZ plane bending: use dz and ry
+            // Hermite internal shape (zero at ends, influenced by rotations)
+            // N2 at t: (t - 2t² + t³)  -> 0 at t=0, 0 at t=1, max at ~0.4
+            // N4 at t: (-t² + t³)      -> 0 at t=0, 0 at t=1, min at ~0.6
+            const N2 = (t - 2*t*t + t*t*t);
+            const N4 = (-t*t + t*t*t);
             
-            let deflection_perpY = 0;
-            let deflection_perpZ = 0;
+            // Calculate bending offset based on rotations
+            let bendingOffset = 0;
             
             if (isVertical) {
-                // Vertical column: lateral sway in X (from rz rotation) and Z (from ry rotation)
-                // dx is the lateral displacement, rz causes bending in XY plane
-                const dx_i = iDisp.dx;
-                const dx_j = jDisp.dx;
-                const rz_i = -iDisp.rz;  // Rotation causes transverse deflection
-                const rz_j = -jDisp.rz;
-                
-                deflection_perpY = N1*dx_i + N2*rz_i + N3*dx_j + N4*rz_j;
-                
-                // Z direction sway
-                const dz_i = iDisp.dz;
-                const dz_j = jDisp.dz;
-                const ry_i = iDisp.ry;
-                const ry_j = jDisp.ry;
-                
-                deflection_perpZ = N1*dz_i + N2*ry_i + N3*dz_j + N4*ry_j;
-                
+                // Vertical column: rz rotation causes bending in X direction
+                // Positive rz at bottom, structure sways right -> midpoint bows right
+                bendingOffset = (N2 * iDisp.rz + N4 * jDisp.rz) * memberLength * autoScale;
             } else {
-                // Horizontal beam: vertical deflection from dy and rotation rz
-                const dy_i = iDisp.dy;
-                const dy_j = jDisp.dy;
-                
-                // For beams, the slope is dv/dx = rotation
-                // Convert global rotation to local slope based on member direction
-                let theta_i, theta_j;
-                
-                if (isHorizontalXY) {
-                    // Beam along X axis: rz rotation gives slope in XY plane
-                    theta_i = iDisp.rz * Math.sign(memberDir.x);
-                    theta_j = jDisp.rz * Math.sign(memberDir.x);
-                } else if (isHorizontalXZ) {
-                    // Beam along Z axis: use different rotation
-                    theta_i = -iDisp.rx * Math.sign(memberDir.z);
-                    theta_j = -jDisp.rx * Math.sign(memberDir.z);
-                } else {
-                    // General case - approximate
-                    theta_i = iDisp.rz;
-                    theta_j = jDisp.rz;
-                }
-                
-                // Cubic Hermite interpolation for vertical deflection
-                deflection_perpY = N1*dy_i + N2*theta_i + N3*dy_j + N4*theta_j;
-                
-                // Horizontal deflection (sway) - linear interpolation is usually sufficient
-                const dx_lin = iDisp.dx * (1 - xi) + jDisp.dx * xi;
-                deflection_perpZ = dx_lin;
+                // Horizontal beam: rz rotation causes vertical bending
+                // Get rotation component along member axis
+                const theta_i = isVertical ? 0 : iDisp.rz;
+                const theta_j = isVertical ? 0 : jDisp.rz;
+                bendingOffset = (N2 * theta_i + N4 * theta_j) * memberLength * autoScale;
             }
             
-            // Apply scale to deflections (NOT to axial - columns don't visibly shorten)
-            const scaledDeflY = deflection_perpY * autoScale;
-            const scaledDeflZ = deflection_perpZ * autoScale;
-            
-            // For axial direction, use very minimal scaling (axial strain is tiny)
-            // Linear interpolation along member axis for axial component
-            let axialDisp = 0;
+            // Apply bending offset perpendicular to member
+            const finalPos = linearPos.clone();
             if (isVertical) {
-                // Vertical: axial is in Y direction - but don't exaggerate it
-                axialDisp = (iDisp.dy * (1 - xi) + jDisp.dy * xi) * autoScale * 0.1;
-            }
-            
-            // Final position
-            let finalX, finalY, finalZ;
-            if (isVertical) {
-                finalX = baseX + scaledDeflY;  // X sway
-                finalY = baseY + axialDisp;    // Minimal axial
-                finalZ = baseZ + scaledDeflZ;  // Z sway
+                // Bending in X direction for vertical members
+                finalPos.x += bendingOffset;
             } else {
-                finalX = baseX + scaledDeflZ * perpZ.x;  // Horizontal sway
-                finalY = baseY + scaledDeflY;            // Vertical deflection
-                finalZ = baseZ + scaledDeflZ * perpZ.z;
+                // Bending in Y direction for horizontal members  
+                finalPos.y += bendingOffset;
             }
             
-            points.push(new THREE.Vector3(finalX, finalY, finalZ));
+            points.push(finalPos);
         }
         
         // Create a smooth curve through the points
@@ -855,42 +806,26 @@ window.showFEADeformedShape = function(scale = 50) {
         }
     });
 
-    // Add deflection labels at midspan of horizontal beams
-    model.members.forEach(member => {
-        const iPos = nodePos.get(member.i_node);
-        const jPos = nodePos.get(member.j_node);
-        if (!iPos || !jPos) return;
+    // Add deflection labels at displaced nodes showing x, y, z values
+    model.nodes.forEach(node => {
+        const pos = nodePos.get(node.name);
+        const disp = dispMap.get(node.name);
+        if (!pos || !disp) return;
         
-        // Check if this is a horizontal beam (not a column)
-        const memberDir = new THREE.Vector3(
-            jPos.x - iPos.x,
-            jPos.y - iPos.y,
-            jPos.z - iPos.z
+        // Skip nodes with negligible displacement
+        const totalDisp = Math.sqrt(disp.dx*disp.dx + disp.dy*disp.dy + disp.dz*disp.dz);
+        if (totalDisp < 1e-8) return;
+        
+        // Position label near the displaced node
+        const labelPos = new THREE.Vector3(
+            pos.x + disp.dx * autoScale + 0.3,
+            pos.y + disp.dy * autoScale + 0.2,
+            pos.z + disp.dz * autoScale
         );
-        const isVertical = Math.abs(memberDir.y / memberDir.length()) > 0.7;
-        if (isVertical) return;  // Only label horizontal beams
         
-        const iDisp = dispMap.get(member.i_node) || { dx: 0, dy: 0, dz: 0, rz: 0 };
-        const jDisp = dispMap.get(member.j_node) || { dx: 0, dy: 0, dz: 0, rz: 0 };
-        
-        // Use Hermite interpolation to find midspan deflection
-        const L = memberDir.length();
-        const xi = 0.5;  // Midspan
-        const N1 = 1 - 3*xi*xi + 2*xi*xi*xi;
-        const N2 = (xi - 2*xi*xi + xi*xi*xi) * L;
-        const N3 = 3*xi*xi - 2*xi*xi*xi;
-        const N4 = (-xi*xi + xi*xi*xi) * L;
-        
-        const midDefl = N1*iDisp.dy + N2*iDisp.rz + N3*jDisp.dy + N4*jDisp.rz;
-        
-        if (Math.abs(midDefl) > 1e-6) {
-            const midX = (iPos.x + jPos.x) / 2 + (iDisp.dx + jDisp.dx) / 2 * autoScale;
-            const midY = (iPos.y + jPos.y) / 2 + midDefl * autoScale - 0.3;
-            const midZ = (iPos.z + jPos.z) / 2;
-            
-            const labelPos = new THREE.Vector3(midX, midY, midZ);
-            addDiagramLabelClean(labelPos, `δ=${(Math.abs(midDefl)*1000).toFixed(2)}mm`, sceneData);
-        }
+        // Format as x, y, z values in mm
+        const labelText = `x=${(disp.dx*1000).toFixed(2)}mm\ny=${(disp.dy*1000).toFixed(2)}mm\nz=${(disp.dz*1000).toFixed(2)}mm`;
+        addMultiLineLabelClean(labelPos, labelText, sceneData);
     });
 
     if (window.addSolverLog) {
@@ -1914,15 +1849,15 @@ function addDiagramLabelClean(position, text, sceneData) {
     const canvas = document.createElement('canvas');
     const context = canvas.getContext('2d');
     const dpr = 2; // Higher resolution
-    canvas.width = 128 * dpr;
-    canvas.height = 32 * dpr;
+    canvas.width = 160 * dpr;
+    canvas.height = 40 * dpr;
     
     // Clear - transparent background
     context.clearRect(0, 0, canvas.width, canvas.height);
     
-    // Draw text - clean, readable
-    context.font = `${16 * dpr}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
-    context.fillStyle = '#1a1a1a';
+    // Draw text - bigger and bolder
+    context.font = `bold ${18 * dpr}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+    context.fillStyle = '#000000';
     context.textAlign = 'center';
     context.textBaseline = 'middle';
     context.fillText(text, canvas.width / 2, canvas.height / 2);
@@ -1937,10 +1872,57 @@ function addDiagramLabelClean(position, text, sceneData) {
     const sprite = new THREE.Sprite(spriteMaterial);
     
     sprite.position.copy(position);
-    sprite.scale.set(0.8, 0.2, 1);
+    sprite.scale.set(1.2, 0.3, 1);  // Bigger scale
     
     sceneData.scene.add(sprite);
     window.feaDiagramObjects.push(sprite);
+}
+
+// Helper function to add multi-line label for deflections
+function addMultiLineLabelClean(position, text, sceneData) {
+    const lines = text.split('\n');
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    const dpr = 2;
+    canvas.width = 180 * dpr;
+    canvas.height = (25 * lines.length + 10) * dpr;
+    
+    // Semi-transparent background for readability
+    context.fillStyle = 'rgba(255, 255, 255, 0.85)';
+    context.roundRect(0, 0, canvas.width, canvas.height, 8 * dpr);
+    context.fill();
+    
+    // Draw border
+    context.strokeStyle = '#004f3b';
+    context.lineWidth = 2 * dpr;
+    context.stroke();
+    
+    // Draw text lines
+    context.font = `bold ${14 * dpr}px monospace`;
+    context.fillStyle = '#1a1a1a';
+    context.textAlign = 'left';
+    context.textBaseline = 'top';
+    
+    lines.forEach((line, i) => {
+        context.fillText(line, 10 * dpr, (8 + i * 22) * dpr);
+    });
+    
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.minFilter = THREE.LinearFilter;
+    const spriteMaterial = new THREE.SpriteMaterial({ 
+        map: texture, 
+        transparent: true,
+        depthTest: false
+    });
+    const sprite = new THREE.Sprite(spriteMaterial);
+    
+    sprite.position.copy(position);
+    const aspectRatio = canvas.width / canvas.height;
+    sprite.scale.set(1.0 * aspectRatio, 1.0, 1);  // Maintain aspect ratio
+    
+    sceneData.scene.add(sprite);
+    window.feaDiagramObjects.push(sprite);
+}
 }
 
 // Legacy label function (keeping for compatibility)

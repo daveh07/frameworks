@@ -22,7 +22,7 @@ pub fn AnalysisPanel(
     let mut max_reaction = use_signal(|| 0.0_f64);
     
     // Deformation scale
-    let mut deform_scale = use_signal(|| 10.0_f64);
+    let mut deform_scale = use_signal(|| 0.0_f64);
 
     let run_fea_analysis = move |_| {
         spawn(async move {
