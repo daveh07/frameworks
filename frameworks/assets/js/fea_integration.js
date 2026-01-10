@@ -658,15 +658,15 @@ window.showFEADeformedShape = function(scale = 50) {
     });
 
     // Auto-scale: make max displacement visible as fraction of structure size
-    // Scale 0-50 maps linearly: scale 0 -> 0%, scale 10 -> 2%, scale 50 -> 10%
-    const targetDeflectionRatio = (scale / 50) * 0.10; // 0% to 10% range
+    // Scale 0-500 maps linearly: scale 0 -> 0%, scale 100 -> 10%, scale 500 -> 50%
+    const targetDeflectionRatio = (scale / 500) * 0.50; // 0% to 50% range
     const autoScale = maxTransDisp > 0 ? (maxDim * targetDeflectionRatio) / maxTransDisp : scale;
     console.log('Auto-scale factor:', autoScale.toFixed(1), 'target ratio:', (targetDeflectionRatio*100).toFixed(2), '%');
 
     let membersDrawn = 0;
 
-    // Deformed shape color - maroon
-    const deformedColor = 0x8c0126;
+    // Deformed shape color - Light Blue
+    const deformedColor = 0x0097c4
 
     // Draw deformed members - ensure endpoints match exactly at displaced node positions
     model.members.forEach(member => {
@@ -726,7 +726,6 @@ window.showFEADeformedShape = function(scale = 50) {
             // Add bending curvature based on end rotations
             // The cubic shape adds deflection perpendicular to the member
             // Shape function for internal bending: peaks at midspan, zero at ends
-            // Using: f(t) = 4*t*(1-t) for parabolic, or cubic Hermite for rotation-based
             
             // Hermite internal shape (zero at ends, influenced by rotations)
             // N2 at t: (t - 2t² + t³)  -> 0 at t=0, 0 at t=1, max at ~0.4
@@ -737,16 +736,26 @@ window.showFEADeformedShape = function(scale = 50) {
             // Calculate bending offset based on rotations
             let bendingOffset = 0;
             
+            // Determine beam orientation for correct rotation component
+            const isAlongX = Math.abs(memberDir.x) > 0.7;
+            const isAlongZ = Math.abs(memberDir.z) > 0.7;
+            
             if (isVertical) {
                 // Vertical column: rz rotation causes bending in X direction
-                // Positive rz at bottom, structure sways right -> midpoint bows right
                 bendingOffset = (N2 * iDisp.rz + N4 * jDisp.rz) * memberLength * autoScale;
-            } else {
-                // Horizontal beam: rz rotation causes vertical bending
-                // Get rotation component along member axis
-                const theta_i = isVertical ? 0 : iDisp.rz;
-                const theta_j = isVertical ? 0 : jDisp.rz;
+            } else if (isAlongX) {
+                // Beam along X axis: rz rotation causes vertical bending
+                const theta_i = iDisp.rz * Math.sign(memberDir.x);
+                const theta_j = jDisp.rz * Math.sign(memberDir.x);
                 bendingOffset = (N2 * theta_i + N4 * theta_j) * memberLength * autoScale;
+            } else if (isAlongZ) {
+                // Beam along Z axis: rx rotation causes vertical bending
+                const theta_i = -iDisp.rx * Math.sign(memberDir.z);
+                const theta_j = -jDisp.rx * Math.sign(memberDir.z);
+                bendingOffset = (N2 * theta_i + N4 * theta_j) * memberLength * autoScale;
+            } else {
+                // General diagonal beam - use rz as approximation
+                bendingOffset = (N2 * iDisp.rz + N4 * jDisp.rz) * memberLength * autoScale;
             }
             
             // Apply bending offset perpendicular to member
@@ -765,9 +774,9 @@ window.showFEADeformedShape = function(scale = 50) {
         // Create a smooth curve through the points
         const curve = new THREE.CatmullRomCurve3(points);
         
-        // Use thin tube for solid highlighted deformed shape
-        const tubeRadius = 0.025;
-        const tubeGeometry = new THREE.TubeGeometry(curve, 40, tubeRadius, 6, false);
+        // Use thin line for deformed shape
+        const tubeRadius = 0.008;
+        const tubeGeometry = new THREE.TubeGeometry(curve, 40, tubeRadius, 4, false);
         const tubeMaterial = new THREE.MeshBasicMaterial({ 
             color: deformedColor,
             transparent: false
@@ -1855,8 +1864,8 @@ function addDiagramLabelClean(position, text, sceneData) {
     // Clear - transparent background
     context.clearRect(0, 0, canvas.width, canvas.height);
     
-    // Draw text - bigger and bolder
-    context.font = `bold ${18 * dpr}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+    // Draw text - clean, readable
+    context.font = `${18 * dpr}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
     context.fillStyle = '#000000';
     context.textAlign = 'center';
     context.textBaseline = 'middle';
@@ -1884,27 +1893,20 @@ function addMultiLineLabelClean(position, text, sceneData) {
     const canvas = document.createElement('canvas');
     const context = canvas.getContext('2d');
     const dpr = 2;
-    canvas.width = 180 * dpr;
-    canvas.height = (25 * lines.length + 10) * dpr;
+    canvas.width = 160 * dpr;
+    canvas.height = (20 * lines.length + 5) * dpr;
     
-    // Semi-transparent background for readability
-    context.fillStyle = 'rgba(255, 255, 255, 0.85)';
-    context.roundRect(0, 0, canvas.width, canvas.height, 8 * dpr);
-    context.fill();
+    // Clear - transparent background (no box)
+    context.clearRect(0, 0, canvas.width, canvas.height);
     
-    // Draw border
-    context.strokeStyle = '#004f3b';
-    context.lineWidth = 2 * dpr;
-    context.stroke();
-    
-    // Draw text lines
-    context.font = `bold ${14 * dpr}px monospace`;
+    // Draw text lines - plain, no bold
+    context.font = `${13 * dpr}px monospace`;
     context.fillStyle = '#1a1a1a';
     context.textAlign = 'left';
     context.textBaseline = 'top';
     
     lines.forEach((line, i) => {
-        context.fillText(line, 10 * dpr, (8 + i * 22) * dpr);
+        context.fillText(line, 5 * dpr, (3 + i * 18) * dpr);
     });
     
     const texture = new THREE.CanvasTexture(canvas);

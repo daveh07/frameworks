@@ -167,13 +167,13 @@ pub fn AnalysisPanel(
                         
                         // Deformation Scale Slider
                         div { class: "control-row",
-                            label { "Deform Scale: {deform_scale():.1}x" }
+                            label { "Deform Scale: {deform_scale():.0}x" }
                             input {
                                 r#type: "range",
                                 class: "scale-slider",
                                 min: "0",
-                                max: "50",
-                                step: "0.5",
+                                max: "500",
+                                step: "1",
                                 value: "{deform_scale}",
                                 oninput: move |evt| {
                                     if let Ok(v) = evt.value().parse::<f64>() {
