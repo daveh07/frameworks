@@ -658,8 +658,8 @@ window.showFEADeformedShape = function(scale = 50) {
     });
 
     // Auto-scale: make max displacement visible as fraction of structure size
-    // Scale 0-500 maps linearly: scale 0 -> 0%, scale 100 -> 10%, scale 500 -> 50%
-    const targetDeflectionRatio = (scale / 500) * 0.50; // 0% to 50% range
+    // Scale 0-20 maps linearly: scale 0 -> 0%, scale 10 -> 5%, scale 20 -> 10%
+    const targetDeflectionRatio = (scale / 20) * 0.10; // 0% to 10% range
     const autoScale = maxTransDisp > 0 ? (maxDim * targetDeflectionRatio) / maxTransDisp : scale;
     console.log('Auto-scale factor:', autoScale.toFixed(1), 'target ratio:', (targetDeflectionRatio*100).toFixed(2), '%');
 
@@ -784,6 +784,56 @@ window.showFEADeformedShape = function(scale = 50) {
         const tube = new THREE.Mesh(tubeGeometry, tubeMaterial);
         sceneData.scene.add(tube);
         window.feaDiagramObjects.push(tube);
+
+        // Find max/min deflection point along the member for labeling
+        // Check all points and find the one with maximum perpendicular offset from original
+        let maxDeflection = 0;
+        let maxDeflectionPoint = null;
+        let maxDeflectionValue = { dx: 0, dy: 0, dz: 0 };
+        
+        for (let i = 0; i <= segments; i++) {
+            const t = i / segments;
+            const origPos = new THREE.Vector3().lerpVectors(iPos, jPos, t);
+            const defPos = points[i];
+            
+            // Calculate deflection relative to original undeformed position
+            const deflection = new THREE.Vector3().subVectors(defPos, origPos);
+            const deflMag = deflection.length();
+            
+            if (deflMag > maxDeflection && t > 0.1 && t < 0.9) {
+                // Only consider interior points (not near ends)
+                maxDeflection = deflMag;
+                maxDeflectionPoint = defPos.clone();
+                // Calculate actual displacement at this point (interpolated)
+                maxDeflectionValue = {
+                    dx: (iDisp.dx * (1-t) + jDisp.dx * t) * autoScale + (defPos.x - origPos.x - (iDisp.dx * (1-t) + jDisp.dx * t) * autoScale),
+                    dy: (iDisp.dy * (1-t) + jDisp.dy * t) * autoScale + (defPos.y - origPos.y - (iDisp.dy * (1-t) + jDisp.dy * t) * autoScale),
+                    dz: (iDisp.dz * (1-t) + jDisp.dz * t) * autoScale + (defPos.z - origPos.z - (iDisp.dz * (1-t) + jDisp.dz * t) * autoScale)
+                };
+            }
+        }
+        
+        // Add label at max deflection point if significant
+        if (maxDeflectionPoint && maxDeflection > 0.01) {
+            // Get midpoint interpolated displacement (unscaled, in original units)
+            const midT = 0.5;
+            const midOrigPos = new THREE.Vector3().lerpVectors(iPos, jPos, midT);
+            const midDefPos = points[Math.floor(segments / 2)];
+            
+            // Calculate actual deflection at midpoint in mm
+            const midDx = ((iDisp.dx + jDisp.dx) / 2) * 1000;
+            const midDy = ((iDisp.dy + jDisp.dy) / 2) * 1000;
+            const midDz = ((iDisp.dz + jDisp.dz) / 2) * 1000;
+            
+            // Position label offset from the max point
+            const labelPos = maxDeflectionPoint.clone();
+            labelPos.y += 0.15;
+            labelPos.x += 0.1;
+            
+            // Format the deflection values at midspan
+            const labelText = `δx=${midDx.toFixed(2)}mm\nδy=${midDy.toFixed(2)}mm\nδz=${midDz.toFixed(2)}mm`;
+            addMultiLineLabelClean(labelPos, labelText, sceneData);
+        }
 
         membersDrawn++;
     });
