@@ -317,11 +317,26 @@ export function showBendingMomentDiagram() {
             return;
         }
         
+        // Calculate the chain's bending plane direction (dominant horizontal direction)
+        // This is used to orient moment diagrams for vertical columns
+        let chainPlaneDir = new THREE.Vector3(1, 0, 0); // default to X
+        let maxHorizontalExtent = 0;
+        spans.forEach(span => {
+            const dir = new THREE.Vector3().subVectors(span.endPos, span.startPos);
+            const horizDir = new THREE.Vector3(dir.x, 0, dir.z);
+            const horizLen = horizDir.length();
+            if (horizLen > maxHorizontalExtent) {
+                maxHorizontalExtent = horizLen;
+                chainPlaneDir = horizDir.normalize();
+            }
+        });
+        
         // Get support types at chain endpoints
         const leftSupport = getSupportTypeAtPosition(spans[0].startPos);
         const rightSupport = getSupportTypeAtPosition(spans[spans.length - 1].endPos);
         
         console.log('Support types: left =', leftSupport, ', right =', rightSupport);
+        console.log('Chain plane direction:', chainPlaneDir.x.toFixed(2), chainPlaneDir.y.toFixed(2), chainPlaneDir.z.toFixed(2));
         
         // Calculate moments based on support conditions
         let supportMoments;
@@ -370,7 +385,7 @@ export function showBendingMomentDiagram() {
             
             const diagram = createContinuousMomentCurve(
                 span.startPos, span.endPos, span.length, span.udl, M_left, M_right,
-                { showLeftLabel: true, showRightLabel: isLastSpan, diagramScale }
+                { showLeftLabel: true, showRightLabel: isLastSpan, diagramScale, chainPlaneDir }
             );
             
             if (diagram) {
@@ -706,16 +721,55 @@ function solveTridiagonal(a, b, c, d) {
  * Create moment curve for a span of continuous beam
  * With known end moments M_left and M_right
  * Colors: Teal for sagging (positive), blue for hogging (negative)
- * @param {Object} options - { showLeftLabel: bool, showRightLabel: bool, diagramScale: number }
+ * @param {Object} options - { showLeftLabel: bool, showRightLabel: bool, diagramScale: number, chainPlaneDir: THREE.Vector3 }
  */
 function createContinuousMomentCurve(startPos, endPos, L, w, M_left, M_right, options = {}) {
-    const { showLeftLabel = true, showRightLabel = true, diagramScale: passedScale } = options;
+    const { showLeftLabel = true, showRightLabel = true, diagramScale: passedScale, chainPlaneDir } = options;
     const group = new THREE.Group();
-    const upDir = new THREE.Vector3(0, 1, 0);
     
-    // Colors - teal for sagging, blue for hogging (diagram fill colors)
-    const saggingColor = 0x42f5b9;  // Teal for positive/sagging moments
-    const hoggingColor = 0x002fff;  // Blue for negative/hogging moments
+    // Calculate member direction and perpendicular offset direction
+    // For vertical columns: offset in the direction of the chain's bending plane
+    // For horizontal/inclined beams: offset in global Y direction
+    const memberDir = new THREE.Vector3().subVectors(endPos, startPos).normalize();
+    const isVertical = Math.abs(memberDir.y) > 0.9;
+    
+    let perpDir;
+    if (isVertical) {
+        // For vertical members, offset in the chain's plane direction
+        // This ensures columns in different frame directions show moments correctly
+        if (chainPlaneDir) {
+            // Use the chain's horizontal direction as the perpendicular offset
+            perpDir = chainPlaneDir.clone();
+            // Ensure it's normalized and purely horizontal
+            perpDir.y = 0;
+            perpDir.normalize();
+        } else {
+            // Fallback: use cross product with global Z
+            const globalZ = new THREE.Vector3(0, 0, 1);
+            perpDir = new THREE.Vector3().crossVectors(memberDir, globalZ).normalize();
+            if (perpDir.lengthSq() < 0.001) {
+                const globalX = new THREE.Vector3(1, 0, 0);
+                perpDir = new THREE.Vector3().crossVectors(memberDir, globalX).normalize();
+            }
+        }
+    } else {
+        // For horizontal/inclined members, use global Y (upward offset)
+        perpDir = new THREE.Vector3(0, 1, 0);
+    }
+    
+    // Colors - different for beams vs columns
+    // Beams: Teal for sagging (positive), blue for hogging (negative)
+    // Columns: Blue color for all moments
+    let saggingColor, hoggingColor;
+    if (isVertical) {
+        // Column moments - blue
+        saggingColor = 0x0066cc;   // Blue for column moments
+        hoggingColor = 0x0066cc;   // Blue for column moments
+    } else {
+        // Beam moments - teal/blue based on sign
+        saggingColor = 0x42f5b9;  // Teal for positive/sagging moments
+        hoggingColor = 0x002fff;  // Blue for negative/hogging moments
+    }
     
     // For span with UDL w and end moments M_left, M_right:
     // M(x) = M_left + (M_right - M_left)*x/L + w*x*(L-x)/2
@@ -744,9 +798,9 @@ function createContinuousMomentCurve(startPos, endPos, L, w, M_left, M_right, op
         const pos = new THREE.Vector3().lerpVectors(startPos, endPos, t);
         const M = moments[i];
         
-        // Positive moment (sagging) shown below, negative (hogging) shown above
+        // Positive moment (sagging) shown in negative perpDir, negative (hogging) shown in positive perpDir
         const offset = M * diagramScale;
-        const offsetPos = pos.clone().add(upDir.clone().multiplyScalar(-offset));
+        const offsetPos = pos.clone().add(perpDir.clone().multiplyScalar(-offset));
         curvePoints.push(offsetPos);
         fillPoints.push(pos.clone());
     }
@@ -804,7 +858,8 @@ function createContinuousMomentCurve(startPos, endPos, L, w, M_left, M_right, op
     if (maxPositiveMoment > 0.1) {
         const label = createHighResLabel(`${maxPositiveMoment.toFixed(1)} kNm`, '#002266');
         label.position.copy(curvePoints[maxPositiveIdx]);
-        label.position.y -= 0.5;
+        // Offset label further in perpendicular direction
+        label.position.add(perpDir.clone().multiplyScalar(-0.5));
         group.add(label);
     }
     
@@ -813,14 +868,14 @@ function createContinuousMomentCurve(startPos, endPos, L, w, M_left, M_right, op
     if (showLeftLabel && Math.abs(M_left) > 0.1) {
         const labelLeft = createHighResLabel(`${M_left.toFixed(1)} kNm`, '#002266');
         labelLeft.position.copy(curvePoints[0]);
-        labelLeft.position.y += 0.4;
+        labelLeft.position.add(perpDir.clone().multiplyScalar(0.4));
         group.add(labelLeft);
     }
     
     if (showRightLabel && Math.abs(M_right) > 0.1) {
         const labelRight = createHighResLabel(`${M_right.toFixed(1)} kNm`, '#002266');
         labelRight.position.copy(curvePoints[segments]);
-        labelRight.position.y += 0.4;
+        labelRight.position.add(perpDir.clone().multiplyScalar(0.4));
         group.add(labelRight);
     }
     
@@ -891,6 +946,19 @@ export function showShearForceDiagram() {
         const hasLoad = spans.some(s => s.udl > 0);
         if (!hasLoad) return;
         
+        // Calculate the chain's bending plane direction (dominant horizontal direction)
+        let chainPlaneDir = new THREE.Vector3(1, 0, 0);
+        let maxHorizontalExtent = 0;
+        spans.forEach(span => {
+            const dir = new THREE.Vector3().subVectors(span.endPos, span.startPos);
+            const horizDir = new THREE.Vector3(dir.x, 0, dir.z);
+            const horizLen = horizDir.length();
+            if (horizLen > maxHorizontalExtent) {
+                maxHorizontalExtent = horizLen;
+                chainPlaneDir = horizDir.normalize();
+            }
+        });
+        
         // Get support types at chain endpoints
         const leftSupport = getSupportTypeAtPosition(spans[0].startPos);
         const rightSupport = getSupportTypeAtPosition(spans[spans.length - 1].endPos);
@@ -939,7 +1007,7 @@ export function showShearForceDiagram() {
             
             const diagram = createContinuousShearCurve(
                 span.startPos, span.endPos, span.length, span.udl, M_left, M_right,
-                { diagramScale }
+                { diagramScale, chainPlaneDir }
             );
             
             if (diagram) {
@@ -960,12 +1028,37 @@ window.showShearForceDiagram = showShearForceDiagram;
 /**
  * Create shear force diagram for a span of continuous beam
  * Dark green color with transparent shading
- * @param {Object} options - { diagramScale: number }
+ * @param {Object} options - { diagramScale: number, chainPlaneDir: THREE.Vector3 }
  */
 function createContinuousShearCurve(startPos, endPos, L, w, M_left, M_right, options = {}) {
-    const { diagramScale: passedScale } = options;
+    const { diagramScale: passedScale, chainPlaneDir } = options;
     const group = new THREE.Group();
-    const upDir = new THREE.Vector3(0, 1, 0);
+    
+    // Calculate member direction and perpendicular offset direction
+    // For vertical columns: offset in the direction of the chain's bending plane
+    // For horizontal/inclined beams: offset in global Y direction
+    const memberDir = new THREE.Vector3().subVectors(endPos, startPos).normalize();
+    const isVertical = Math.abs(memberDir.y) > 0.9;
+    
+    let perpDir;
+    if (isVertical) {
+        // For vertical members, offset in the chain's plane direction
+        if (chainPlaneDir) {
+            perpDir = chainPlaneDir.clone();
+            perpDir.y = 0;
+            perpDir.normalize();
+        } else {
+            const globalZ = new THREE.Vector3(0, 0, 1);
+            perpDir = new THREE.Vector3().crossVectors(memberDir, globalZ).normalize();
+            if (perpDir.lengthSq() < 0.001) {
+                const globalX = new THREE.Vector3(1, 0, 0);
+                perpDir = new THREE.Vector3().crossVectors(memberDir, globalX).normalize();
+            }
+        }
+    } else {
+        // For horizontal/inclined members, use global Y (upward offset)
+        perpDir = new THREE.Vector3(0, 1, 0);
+    }
     
     // Red color for shear
     const shearColor = 0xb80015;
@@ -999,7 +1092,7 @@ function createContinuousShearCurve(startPos, endPos, L, w, M_left, M_right, opt
         shears.push(V);
         
         const offset = V * diagramScale;
-        const offsetPos = pos.clone().add(upDir.clone().multiplyScalar(-offset));
+        const offsetPos = pos.clone().add(perpDir.clone().multiplyScalar(-offset));
         curvePoints.push(offsetPos);
         fillPoints.push(pos.clone());
     }
@@ -1036,12 +1129,12 @@ function createContinuousShearCurve(startPos, endPos, L, w, M_left, M_right, opt
     // Labels at both ends
     const labelLeft = createHighResLabel(`${V_left.toFixed(1)} kN`, shearColorHex);
     labelLeft.position.copy(curvePoints[0]);
-    labelLeft.position.y -= (V_left > 0 ? 0.5 : -0.5);
+    labelLeft.position.add(perpDir.clone().multiplyScalar(V_left > 0 ? -0.5 : 0.5));
     group.add(labelLeft);
     
     const labelRight = createHighResLabel(`${V_right.toFixed(1)} kN`, shearColorHex);
     labelRight.position.copy(curvePoints[segments]);
-    labelRight.position.y -= (V_right > 0 ? 0.5 : -0.5);
+    labelRight.position.add(perpDir.clone().multiplyScalar(V_right > 0 ? -0.5 : 0.5));
     group.add(labelRight);
     
     return group;
@@ -1143,7 +1236,26 @@ export function showDeformedShape() {
 function createDeflectedCurve(startPos, endPos, maxDeflection, beamLength, maxDeflectionMm) {
     const group = new THREE.Group();
     
-    const upDir = new THREE.Vector3(0, 1, 0);
+    // Calculate member direction and perpendicular offset direction
+    // For vertical columns: offset horizontally (perpendicular to column axis)
+    // For horizontal/inclined beams: offset in global Y direction (downward deflection)
+    const memberDir = new THREE.Vector3().subVectors(endPos, startPos).normalize();
+    const isVertical = Math.abs(memberDir.y) > 0.9;
+    
+    let perpDir;
+    if (isVertical) {
+        // For vertical members, offset horizontally using cross product with global Z
+        const globalZ = new THREE.Vector3(0, 0, 1);
+        perpDir = new THREE.Vector3().crossVectors(memberDir, globalZ).normalize();
+        // If cross product is zero (member parallel to Z), use X instead
+        if (perpDir.lengthSq() < 0.001) {
+            const globalX = new THREE.Vector3(1, 0, 0);
+            perpDir = new THREE.Vector3().crossVectors(memberDir, globalX).normalize();
+        }
+    } else {
+        // For horizontal/inclined members, use global Y (upward offset)
+        perpDir = new THREE.Vector3(0, 1, 0);
+    }
     
     // Scale deflection for visibility (show ~15% of beam length as max visual deflection)
     const visualScale = (beamLength * 0.15) / maxDeflection;
@@ -1161,8 +1273,8 @@ function createDeflectedCurve(startPos, endPos, maxDeflection, beamLength, maxDe
         // Actually simplest accurate: δ(t) = δ_max * Math.sin(Math.PI * t) is very close
         const deflectionValue = maxDeflection * Math.sin(Math.PI * t) * visualScale;
         
-        // Offset downward (negative Y) for deflection
-        const offsetPos = pos.clone().add(upDir.clone().multiplyScalar(-deflectionValue));
+        // Offset in perpendicular direction for deflection
+        const offsetPos = pos.clone().add(perpDir.clone().multiplyScalar(-deflectionValue));
         curvePoints.push(offsetPos);
     }
     
@@ -1187,7 +1299,7 @@ function createDeflectedCurve(startPos, endPos, maxDeflection, beamLength, maxDe
     const centerIdx = Math.floor(segments / 2);
     const label = createHighResLabel(`${maxDeflectionMm.toFixed(2)} mm`, '#00aa44');
     label.position.copy(curvePoints[centerIdx]);
-    label.position.y -= 0.5;
+    label.position.add(perpDir.clone().multiplyScalar(-0.5));
     group.add(label);
     
     return group;

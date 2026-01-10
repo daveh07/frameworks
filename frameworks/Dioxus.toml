@@ -19,7 +19,7 @@ title = "Plane-S Structural Analysis"
 
 index_on_404 = true
 
-watch_path = ["src", "public", "index.html"]
+watch_path = ["src", "assets", "index.html"]
 
 [bundle]
 # Bundle identifier

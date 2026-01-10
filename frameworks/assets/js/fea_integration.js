@@ -21,10 +21,20 @@ window.refreshCurrentDiagram = function() {
     
     switch (window.currentDiagramType) {
         case 'moment_xy':
-            window.showFEABendingMomentDiagram();
+            window.clearFEADiagrams();
+            window.currentDiagramType = 'moment_xy';
+            window.showFEABendingMomentDiagramInternal('XY', false);
             break;
         case 'moment_xz':
-            window.showFEABendingMomentDiagramXZ();
+            window.clearFEADiagrams();
+            window.currentDiagramType = 'moment_xz';
+            window.showFEABendingMomentDiagramInternal('XZ', false);
+            break;
+        case 'moment_both':
+            window.clearFEADiagrams();
+            window.currentDiagramType = 'moment_both';
+            window.showFEABendingMomentDiagramInternal('XY', false);
+            window.showFEABendingMomentDiagramInternal('XZ', false);
             break;
         case 'shear':
             window.showFEAShearForceDiagram();
@@ -617,16 +627,18 @@ window.showFEADeformedShape = function(scale = 50) {
     const sceneData = window.sceneData;
     
     if (!results || !model || !sceneData) {
-        console.error('No FEA results available');
+        console.error('No FEA results available - results:', !!results, 'model:', !!model, 'sceneData:', !!sceneData);
         return;
     }
 
     console.log('Showing deformed shape with scale:', scale);
+    console.log('Nodes:', model.nodes.length, 'Displacements:', results.node_displacements.length);
 
     // Build node displacement map (raw, unscaled)
     const dispMap = new Map();
     results.node_displacements.forEach(d => {
-        dispMap.set(d.node, { dx: d.dx, dy: d.dy, dz: d.dz, rz: d.rz });
+        dispMap.set(d.node, { dx: d.dx, dy: d.dy, dz: d.dz, rz: d.rz || 0 });
+        console.log(`Node ${d.node}: dx=${(d.dx*1000).toFixed(3)}mm, dy=${(d.dy*1000).toFixed(3)}mm, dz=${(d.dz*1000).toFixed(3)}mm`);
     });
 
     // Build node position map from model
@@ -652,14 +664,16 @@ window.showFEADeformedShape = function(scale = 50) {
     const sec = model.sections[0] || { iy: 0.001 };
     const I = sec.iy;
 
-    // Draw deformed members with interpolated deflection
-    const deformedMaterial = new THREE.LineBasicMaterial({ 
+    let membersDrawn = 0;
+
+    // Deformed shape material - bright green
+    const deformedMaterial = new THREE.MeshBasicMaterial({ 
         color: 0x00ff00, 
-        linewidth: 3,
         transparent: true,
-        opacity: 0.8
+        opacity: 0.9
     });
 
+    // Draw deformed members using tubes for better visibility
     model.members.forEach(member => {
         const iPos = nodePos.get(member.i_node);
         const jPos = nodePos.get(member.j_node);
@@ -728,18 +742,23 @@ window.showFEADeformedShape = function(scale = 50) {
             ));
         }
         
-        const geometry = new THREE.BufferGeometry().setFromPoints(points);
-        const line = new THREE.Line(geometry, deformedMaterial);
-        sceneData.scene.add(line);
-        window.feaDiagramObjects.push(line);
+        // Create tube geometry along the deformed curve path
+        const curve = new THREE.CatmullRomCurve3(points);
+        const tubeGeometry = new THREE.TubeGeometry(curve, 40, 0.03, 8, false);
+        const tubeMesh = new THREE.Mesh(tubeGeometry, deformedMaterial);
+        sceneData.scene.add(tubeMesh);
+        window.feaDiagramObjects.push(tubeMesh);
+        membersDrawn++;
 
         // Calculate and log max deflection
         let maxDefl = 0;
         if (Math.abs(w) > 0 && E > 0 && I > 0) {
             maxDefl = 5 * Math.abs(w) * Math.pow(memberLength, 4) / (384 * E * I);
         }
-        console.log(`Member ${member.name}: w=${w} N/m, L=${memberLength.toFixed(2)}m, E=${E.toExponential(2)}, I=${I.toExponential(4)}, maxDefl=${(maxDefl*1000).toFixed(2)} mm`);
+        console.log(`Member ${member.name}: w=${w} N/m, L=${memberLength.toFixed(2)}m, maxDefl=${(maxDefl*1000).toFixed(2)} mm`);
     });
+
+    console.log('Deformed members drawn:', membersDrawn);
 
     // Draw deformed node markers
     const nodeGeometry = new THREE.SphereGeometry(0.1, 16, 16);
@@ -798,8 +817,10 @@ window.showFEADeformedShape = function(scale = 50) {
 };
 
 // Show bending moment diagram - common implementation for both planes
-window.showFEABendingMomentDiagramInternal = function(plane = 'XY') {
-    window.clearFEADiagrams();
+window.showFEABendingMomentDiagramInternal = function(plane = 'XY', clearFirst = true) {
+    if (clearFirst) {
+        window.clearFEADiagrams();
+    }
     
     const results = window.feaResults;
     const model = window.feaModel;
@@ -860,7 +881,7 @@ window.showFEABendingMomentDiagramInternal = function(plane = 'XY') {
     // Sagging = positive moment = tension at bottom fiber = blue
     const saggingColor = 0x0066ff;  // Blue for sagging moments (midspan of loaded beams)
     const hoggingColor = 0x00bd91;  // Green for hogging moments (at supports/columns)
-    const columnColor = 0x00bd91;   // Green for all column moments
+    const columnColor = 0x0066cc;   // Blue for all column moments
 
     // Reconstruct the solver's local axes (same logic as fea-solver/src/math.rs::member_transformation_matrix)
     // and apply member rotation about local x.
@@ -1112,7 +1133,8 @@ window.showFEABendingMomentDiagramInternal = function(plane = 'XY') {
             // Normalize sign: multiply by perpDir component so diagram always bulges outward for tension side
             // perpDir.x is -1 for left columns, +1 for right columns (XY view)
             // perpDir.z is -1 for back columns, +1 for front columns (XZ view)
-            const signCorrection = isXY ? perpDir.x : perpDir.z;
+            // Note: XZ plane (My) needs negative sign to show outward correctly
+            const signCorrection = isXY ? perpDir.x : -perpDir.z;
             Mi = Mi * signCorrection;
             Mj = Mj * signCorrection;
 
@@ -1236,7 +1258,7 @@ window.showFEABendingMomentDiagramInternal = function(plane = 'XY') {
             const M_avg = (moments[i] + moments[i + 1]) / 2;
             let segColor;
             if (isVertical) {
-                segColor = columnColor;  // All blue for columns
+                segColor = columnColor;  // Blue for columns
             } else {
                 segColor = M_avg >= 0 ? saggingColor : hoggingColor;
             }
@@ -1297,14 +1319,46 @@ window.showFEABendingMomentDiagramInternal = function(plane = 'XY') {
 
 // Wrapper function for XY plane (about Z-axis) - default behavior
 window.showFEABendingMomentDiagram = function() {
-    window.currentDiagramType = 'moment_xy';
-    window.showFEABendingMomentDiagramInternal('XY');
+    // Check if we should add to existing moment diagrams or clear first
+    const isMomentDiagram = window.currentDiagramType === 'moment_xy' || 
+                            window.currentDiagramType === 'moment_xz' || 
+                            window.currentDiagramType === 'moment_both';
+    
+    if (!isMomentDiagram) {
+        // Clear non-moment diagrams first
+        window.clearFEADiagrams();
+    }
+    
+    // Update diagram type
+    if (window.currentDiagramType === 'moment_xz') {
+        window.currentDiagramType = 'moment_both';
+    } else {
+        window.currentDiagramType = 'moment_xy';
+    }
+    
+    window.showFEABendingMomentDiagramInternal('XY', false);
 };
 
 // Wrapper function for XZ plane (about Y-axis)
 window.showFEABendingMomentDiagramXZ = function() {
-    window.currentDiagramType = 'moment_xz';
-    window.showFEABendingMomentDiagramInternal('XZ');
+    // Check if we should add to existing moment diagrams or clear first
+    const isMomentDiagram = window.currentDiagramType === 'moment_xy' || 
+                            window.currentDiagramType === 'moment_xz' || 
+                            window.currentDiagramType === 'moment_both';
+    
+    if (!isMomentDiagram) {
+        // Clear non-moment diagrams first
+        window.clearFEADiagrams();
+    }
+    
+    // Update diagram type
+    if (window.currentDiagramType === 'moment_xy') {
+        window.currentDiagramType = 'moment_both';
+    } else {
+        window.currentDiagramType = 'moment_xz';
+    }
+    
+    window.showFEABendingMomentDiagramInternal('XZ', false);
 };
 
 // Show shear force diagram - internal function with plane parameter
@@ -1543,11 +1597,12 @@ window.showFEAAxialForceDiagram = function() {
     const sceneData = window.sceneData;
     
     if (!results || !model || !sceneData) {
-        console.error('No FEA results available');
+        console.error('No FEA results available - results:', !!results, 'model:', !!model, 'sceneData:', !!sceneData);
         return;
     }
 
     console.log('Showing axial force diagram');
+    console.log('Members:', model.members.length, 'Forces:', results.member_forces.length);
 
     const forcesMap = new Map();
     results.member_forces.forEach(f => {
@@ -1559,39 +1614,81 @@ window.showFEAAxialForceDiagram = function() {
         nodePos.set(n.name, new THREE.Vector3(n.x, n.y, n.z));
     });
 
-    // Draw axial force as colored members
+    // Find max axial force for scaling
+    let maxAxial = 0;
+    results.member_forces.forEach(f => {
+        maxAxial = Math.max(maxAxial, Math.abs(f.axial_i));
+    });
+    console.log('Max axial force:', (maxAxial/1000).toFixed(2), 'kN');
+
+    let diagramsCreated = 0;
+
+    // Draw axial force as colored cylinders (tubes) for visibility
     model.members.forEach(member => {
         const forces = forcesMap.get(member.name);
-        if (!forces) return;
+        if (!forces) {
+            console.log(`Member ${member.name}: no forces`);
+            return;
+        }
 
         const iPos = nodePos.get(member.i_node);
         const jPos = nodePos.get(member.j_node);
-        if (!iPos || !jPos) return;
+        if (!iPos || !jPos) {
+            console.log(`Member ${member.name}: missing nodes`);
+            return;
+        }
 
         const axial = forces.axial_i;
         
-        // Color: red for compression, blue for tension
-        const color = axial < 0 ? 0xff0000 : 0x0000ff;
+        // Skip negligible forces (< 1% of max)
+        if (Math.abs(axial) < maxAxial * 0.01 && maxAxial > 0) {
+            return;
+        }
         
-        const material = new THREE.LineBasicMaterial({ 
-            color: color, 
-            linewidth: 5 
+        // Color: red for compression (negative), blue for tension (positive)
+        const color = axial < 0 ? 0xff3333 : 0x3366ff;
+        
+        // Calculate member length and direction
+        const direction = new THREE.Vector3().subVectors(jPos, iPos);
+        const length = direction.length();
+        direction.normalize();
+        
+        // Create a cylinder (tube) along the member
+        // Thickness proportional to force magnitude (min 0.05, max 0.15)
+        const thickness = 0.05 + 0.10 * Math.abs(axial) / (maxAxial || 1);
+        const cylinderGeom = new THREE.CylinderGeometry(thickness, thickness, length, 8);
+        const cylinderMat = new THREE.MeshBasicMaterial({ 
+            color: color,
+            transparent: true,
+            opacity: 0.7
         });
-
-        const points = [iPos.clone(), jPos.clone()];
-        const geometry = new THREE.BufferGeometry().setFromPoints(points);
-        const line = new THREE.Line(geometry, material);
-        sceneData.scene.add(line);
-        window.feaDiagramObjects.push(line);
+        
+        const cylinder = new THREE.Mesh(cylinderGeom, cylinderMat);
+        
+        // Position at midpoint
+        const midPoint = new THREE.Vector3().addVectors(iPos, jPos).multiplyScalar(0.5);
+        cylinder.position.copy(midPoint);
+        
+        // Orient along member (cylinder default is Y-axis)
+        const up = new THREE.Vector3(0, 1, 0);
+        const quaternion = new THREE.Quaternion().setFromUnitVectors(up, direction);
+        cylinder.quaternion.copy(quaternion);
+        
+        sceneData.scene.add(cylinder);
+        window.feaDiagramObjects.push(cylinder);
+        diagramsCreated++;
 
         // Add label at midpoint
-        const midPoint = new THREE.Vector3().addVectors(iPos, jPos).multiplyScalar(0.5);
+        const labelOffset = new THREE.Vector3(0, 0.3, 0);
+        const labelPos = midPoint.clone().add(labelOffset);
         const label = axial < 0 ? `C=${(-axial/1000).toFixed(1)} kN` : `T=${(axial/1000).toFixed(1)} kN`;
-        addDiagramLabel(midPoint, label, sceneData);
+        addDiagramLabel(labelPos, label, sceneData);
     });
 
+    console.log('Axial diagrams created:', diagramsCreated);
+
     if (window.addSolverLog) {
-        window.addSolverLog('Axial force diagram displayed', 'info');
+        window.addSolverLog(`Axial force diagram displayed (${diagramsCreated} members)`, 'info');
     }
 };
 

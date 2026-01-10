@@ -207,11 +207,19 @@ pub fn AnalysisPanel(
                             div { class: "button-row",
                                 button {
                                     class: "diagram-btn",
-                                    title: "Show bending moment diagram in the model plane (2D)",
+                                    title: "Show Mz bending moment diagram (XY plane - gravity bending)",
                                     onclick: move |_| {
                                         eval("window.showFEABendingMomentDiagram()");
                                     },
-                                    "Moments"
+                                    "Mz (XY)"
+                                }
+                                button {
+                                    class: "diagram-btn",
+                                    title: "Show My bending moment diagram (XZ plane - out-of-plane bending)",
+                                    onclick: move |_| {
+                                        eval("window.showFEABendingMomentDiagramXZ()");
+                                    },
+                                    "My (XZ)"
                                 }
                             }
                             div { class: "control-group-label", "Shear Forces" }
