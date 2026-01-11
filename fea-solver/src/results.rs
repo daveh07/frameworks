@@ -144,6 +144,42 @@ pub struct PlateStress {
     pub s2: f64,
 }
 
+/// Full plate stress result with membrane and bending components
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct PlateStressResult {
+    /// Normal stress in local X direction (membrane)
+    pub sx: f64,
+    /// Normal stress in local Y direction (membrane)
+    pub sy: f64,
+    /// In-plane shear stress (membrane)
+    pub txy: f64,
+    /// Von Mises equivalent stress
+    pub von_mises: f64,
+    /// Bending moment Mx per unit width
+    pub mx: f64,
+    /// Bending moment My per unit width
+    pub my: f64,
+    /// Twisting moment Mxy per unit width
+    pub mxy: f64,
+}
+
+impl PlateStressResult {
+    /// Calculate maximum combined stress (membrane + bending)
+    /// Assumes stress varies linearly through thickness
+    pub fn max_stress(&self, thickness: f64) -> f64 {
+        // Bending stress at surface: sigma_b = 6*M / t^2
+        let sx_bend = 6.0 * self.mx / (thickness * thickness);
+        let sy_bend = 6.0 * self.my / (thickness * thickness);
+        
+        // Combined stress at surface
+        let sx_total = self.sx + sx_bend;
+        let sy_total = self.sy + sy_bend;
+        
+        // Von Mises at surface
+        (sx_total.powi(2) - sx_total * sy_total + sy_total.powi(2) + 3.0 * self.txy.powi(2)).sqrt()
+    }
+}
+
 impl PlateStress {
     /// Create from stress components
     pub fn from_components(sx: f64, sy: f64, txy: f64) -> Self {

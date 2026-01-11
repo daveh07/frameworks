@@ -16,13 +16,17 @@ pub fn AnalysisPanel(
     let mut analysis_error = use_signal(|| None::<String>);
     let mut show_results = use_signal(|| false);
     let mut analysis_type = use_signal(|| "linear".to_string());
+    let mut plate_formulation = use_signal(|| "kirchhoff".to_string());
     
     // Results state
     let mut max_displacement = use_signal(|| 0.0_f64);
     let mut max_reaction = use_signal(|| 0.0_f64);
     
-    // Deformation scale
-    let mut deform_scale = use_signal(|| 0.0_f64);
+    // Deformation scale (default 50 for visible deformation)
+    let mut deform_scale = use_signal(|| 50.0_f64);
+    
+    // Label size scale (default 1.0)
+    let mut label_scale = use_signal(|| 1.0_f64);
 
     let run_fea_analysis = move |_| {
         spawn(async move {
@@ -32,6 +36,7 @@ pub fn AnalysisPanel(
             let mat = material_props();
             let beam = beam_props();
             let analysis = analysis_type();
+            let formulation = plate_formulation();
             
             // Build material config for JavaScript
             let material_js = format!(
@@ -50,6 +55,9 @@ pub fn AnalysisPanel(
                 const material = {material_js};
                 const beamSection = {beam_section_js};
                 const analysisType = '{analysis}';
+                
+                // Set plate formulation before analysis
+                window.plateFormulation = '{formulation}';
                 
                 const result = await window.runFEAAnalysis(material, beamSection, analysisType);
                 
@@ -127,6 +135,19 @@ pub fn AnalysisPanel(
                         }
                     }
                     
+                    div { class: "control-row",
+                        label { "Plate Formulation" }
+                        select {
+                            class: "analysis-type-select",
+                            value: "{plate_formulation}",
+                            title: "Select plate bending theory",
+                            onchange: move |evt| plate_formulation.set(evt.value()),
+                            option { value: "kirchhoff", title: "Thin plate theory - best for thickness/span < 1/20", "Kirchhoff (Thin)" }
+                            option { value: "mindlin", title: "Thick plate theory - includes shear deformation", "Mindlin (Thick)" }
+                            option { value: "dkmq", title: "Discrete Kirchhoff-Mindlin - avoids shear locking", "DKMQ (General)" }
+                        }
+                    }
+                    
                     button {
                         class: "btn-analysis-run",
                         disabled: is_analyzing(),
@@ -172,14 +193,34 @@ pub fn AnalysisPanel(
                                 r#type: "range",
                                 class: "scale-slider",
                                 min: "0",
-                                max: "20",
-                                step: "0.2",
+                                max: "100",
+                                step: "1",
                                 value: "{deform_scale}",
                                 oninput: move |evt| {
                                     if let Ok(v) = evt.value().parse::<f64>() {
                                         deform_scale.set(v);
                                         // If deformed shape is currently displayed, refresh it with new scale
                                         eval(&format!("if (window.currentDiagramType === 'deformed') {{ window.showFEADeformedShape({}); }}", v));
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Label Size Slider
+                        div { class: "control-row",
+                            label { "Label Size: {label_scale():.1}x" }
+                            input {
+                                r#type: "range",
+                                class: "scale-slider",
+                                min: "0.2",
+                                max: "3.0",
+                                step: "0.1",
+                                value: "{label_scale}",
+                                oninput: move |evt| {
+                                    if let Ok(v) = evt.value().parse::<f64>() {
+                                        label_scale.set(v);
+                                        // Update global label scale and refresh current diagram
+                                        eval(&format!("window.feaLabelScale = {}; window.refreshCurrentDiagram();", v));
                                     }
                                 }
                             }
@@ -232,6 +273,59 @@ pub fn AnalysisPanel(
                                         eval("window.showFEAShearForceDiagram()");
                                     },
                                     "Shear Force"
+                                }
+                            }
+                            div { class: "control-group-label", "Plate/Shell Stresses" }
+                            div { class: "button-row",
+                                button {
+                                    class: "diagram-btn stress-btn",
+                                    title: "Show von Mises stress contour on plates",
+                                    onclick: move |_| {
+                                        eval("window.showPlateVonMisesStress && window.showPlateVonMisesStress()");
+                                    },
+                                    "Von Mises"
+                                }
+                                button {
+                                    class: "diagram-btn stress-btn",
+                                    title: "Show membrane stress Sx (in-plane, x direction)",
+                                    onclick: move |_| {
+                                        eval("window.showPlateStress && window.showPlateStress('sx')");
+                                    },
+                                    "σx"
+                                }
+                                button {
+                                    class: "diagram-btn stress-btn",
+                                    title: "Show membrane stress Sy (in-plane, y direction)",
+                                    onclick: move |_| {
+                                        eval("window.showPlateStress && window.showPlateStress('sy')");
+                                    },
+                                    "σy"
+                                }
+                            }
+                            div { class: "button-row",
+                                button {
+                                    class: "diagram-btn stress-btn",
+                                    title: "Show bending moment Mx",
+                                    onclick: move |_| {
+                                        eval("window.showPlateStress && window.showPlateStress('mx')");
+                                    },
+                                    "Mx"
+                                }
+                                button {
+                                    class: "diagram-btn stress-btn",
+                                    title: "Show bending moment My",
+                                    onclick: move |_| {
+                                        eval("window.showPlateStress && window.showPlateStress('my')");
+                                    },
+                                    "My"
+                                }
+                                button {
+                                    class: "diagram-btn stress-btn",
+                                    title: "Show shear stress Txy (in-plane)",
+                                    onclick: move |_| {
+                                        eval("window.showPlateStress && window.showPlateStress('txy')");
+                                    },
+                                    "τxy"
                                 }
                             }
                             div { class: "button-row",

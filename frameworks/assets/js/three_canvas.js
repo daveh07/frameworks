@@ -727,13 +727,133 @@ export async function init_three_canvas(canvas) {
     window.applyPointLoad = (loadData) => {
         console.log('window.applyPointLoad called with:', loadData);
         console.log('selectedBeams:', selectedBeams, 'size:', selectedBeams.size);
+        console.log('selectedNodes:', selectedNodes, 'size:', selectedNodes.size);
+        console.log('selectedElements:', selectedElements, 'size:', selectedElements.size);
+        
+        // Initialize point loads array if not exists
+        if (!window.pointLoads) {
+            window.pointLoads = [];
+        }
+        
         if (sceneData && selectedBeams.size > 0) {
+            // Apply to beams (existing behavior)
             loadData.beamIds = Array.from(selectedBeams).map(b => b.uuid);
             addPointLoad(loadData, sceneData);
+        } else if (sceneData && selectedNodes.size > 0) {
+            // Apply to selected structural nodes
+            const mag = parseFloat(loadData.magnitude) || 0;
+            const dir = (loadData.direction || 'y').toLowerCase();
+            const color = loadData.color || '#ff0000';
+            
+            selectedNodes.forEach(node => {
+                // Positive magnitude = force in positive axis direction
+                // Negative magnitude = force in negative axis direction (e.g. -Y for gravity)
+                const load = {
+                    nodeUuid: node.uuid,
+                    fx: dir === 'x' ? mag * 1000 : 0, // Convert kN to N
+                    fy: dir === 'y' ? mag * 1000 : 0,
+                    fz: dir === 'z' ? mag * 1000 : 0
+                };
+                window.pointLoads.push(load);
+                
+                // Create visual arrow at node position
+                const pos = new THREE.Vector3();
+                node.getWorldPosition(pos);
+                createNodePointLoadVisual(pos, mag, dir, color, sceneData);
+                
+                console.log(`Added point load to node ${node.uuid}:`, load);
+            });
+        } else if (sceneData && selectedElements.size > 0) {
+            // Apply to mesh element nodes (new feature)
+            const mag = parseFloat(loadData.magnitude) || 0;
+            const dir = (loadData.direction || 'y').toLowerCase();
+            const color = loadData.color || '#ff0000';
+            
+            // Each mesh element has corner nodes - find unique node positions
+            const processedPositions = new Set();
+            
+            selectedElements.forEach(element => {
+                if (!element.userData || !element.userData.nodeNames) {
+                    console.warn('Element has no nodeNames:', element.uuid);
+                    return;
+                }
+                
+                // Get corner positions from geometry
+                const posAttr = element.geometry.attributes.position;
+                const worldMatrix = new THREE.Matrix4();
+                element.updateMatrixWorld();
+                worldMatrix.copy(element.matrixWorld);
+                
+                // For quad elements, take corner positions
+                for (let i = 0; i < Math.min(4, posAttr.count); i++) {
+                    const localPos = new THREE.Vector3(
+                        posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i)
+                    );
+                    localPos.applyMatrix4(worldMatrix);
+                    
+                    // Create unique key for position (rounded to avoid duplicates)
+                    const key = `${localPos.x.toFixed(4)}_${localPos.y.toFixed(4)}_${localPos.z.toFixed(4)}`;
+                    
+                    if (!processedPositions.has(key)) {
+                        processedPositions.add(key);
+                        
+                        // Store load with generated node name (mesh node)
+                        const nodeName = element.userData.nodeNames[i];
+                        if (nodeName) {
+                            const load = {
+                                meshNodeName: nodeName,
+                                position: { x: localPos.x, y: localPos.y, z: localPos.z },
+                                fx: dir === 'x' ? mag * 1000 : 0,
+                                fy: dir === 'y' ? mag * 1000 : 0,
+                                fz: dir === 'z' ? mag * 1000 : 0
+                            };
+                            window.pointLoads.push(load);
+                            
+                            // Create visual
+                            createNodePointLoadVisual(localPos, mag, dir, color, sceneData);
+                            console.log(`Added point load to mesh node ${nodeName}:`, load);
+                        }
+                    }
+                }
+            });
         } else {
-            console.warn('No beams selected for point load');
+            console.warn('No beams, nodes, or elements selected for point load');
         }
     };
+    
+    // Helper to create point load visual at a node position
+    // Arrow points in the direction of the applied force
+    // Positive magnitude = arrow points in positive axis direction
+    // Negative magnitude = arrow points in negative axis direction
+    function createNodePointLoadVisual(position, magnitude, direction, color, sceneData) {
+        const arrowLength = Math.min(2, Math.max(0.5, Math.abs(magnitude) * 0.15));
+        
+        // Arrow direction matches force direction (positive magnitude = positive axis)
+        const sign = magnitude >= 0 ? 1 : -1;
+        const arrowDir = new THREE.Vector3(
+            direction === 'x' ? sign : 0,
+            direction === 'y' ? sign : 0,
+            direction === 'z' ? sign : 0
+        );
+        
+        // Arrow starts offset from node and points toward the applied force direction
+        // The arrow "tip" points where the force goes, tail is offset back
+        const arrowOrigin = position.clone().sub(arrowDir.clone().multiplyScalar(arrowLength));
+        const arrowHelper = new THREE.ArrowHelper(
+            arrowDir,
+            arrowOrigin,
+            arrowLength,
+            new THREE.Color(color),
+            arrowLength * 0.35,
+            arrowLength * 0.2
+        );
+        arrowHelper.userData.isLoadVisual = true;
+        sceneData.scene.add(arrowHelper);
+        
+        // Track for cleanup
+        if (!window.nodeLoadVisuals) window.nodeLoadVisuals = [];
+        window.nodeLoadVisuals.push(arrowHelper);
+    }
     
     window.applyDistributedLoad = (loadData) => {
         console.log('window.applyDistributedLoad called with:', loadData);
@@ -781,6 +901,23 @@ export async function init_three_canvas(canvas) {
         if (sceneData && selectedBeams.size > 0) {
             const beamIds = Array.from(selectedBeams).map(b => b.uuid);
             clearLoadsFromBeams(beamIds, sceneData);
+        } else if (selectedNodes.size > 0 || selectedElements.size > 0) {
+            // Clear node point loads
+            console.log('Clearing node point loads');
+            
+            // Remove visuals
+            if (window.nodeLoadVisuals) {
+                window.nodeLoadVisuals.forEach(visual => {
+                    if (visual.parent) {
+                        visual.parent.remove(visual);
+                    }
+                });
+                window.nodeLoadVisuals = [];
+            }
+            
+            // Clear point loads array
+            window.pointLoads = [];
+            console.log('Cleared all node point loads');
         } else {
             console.warn('No beams selected to clear loads from');
         }

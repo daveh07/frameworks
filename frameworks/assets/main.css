@@ -1831,12 +1831,14 @@ input:focus, select:focus, textarea:focus {
 
 .analysis-panel .button-row {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
+    flex-wrap: wrap;
     gap: 0.375rem;
 }
 
 .analysis-panel .diagram-btn {
-    width: 100%;
+    flex: 1;
+    min-width: 70px;
   padding: 6px 14px;
   background: #ffffff;
   border: 1.5px solid var(--color-primary-dark);
@@ -1846,7 +1848,7 @@ input:focus, select:focus, textarea:focus {
   color: var(--color-primary-dark);
     cursor: pointer;
     transition: all 0.2s ease;
-    text-align: left;
+    text-align: center;
 }
 
 .analysis-panel .diagram-btn:hover {
@@ -1855,6 +1857,23 @@ input:focus, select:focus, textarea:focus {
 
 .analysis-panel .diagram-btn:active {
   background: rgba(1, 87, 155, 0.12);
+}
+
+/* Stress buttons - distinct color scheme */
+.analysis-panel .diagram-btn.stress-btn {
+  border-color: #7c3aed;
+  color: #7c3aed;
+  background: #faf5ff;
+}
+
+.analysis-panel .diagram-btn.stress-btn:hover {
+  background: #ede9fe;
+  border-color: #6d28d9;
+  color: #6d28d9;
+}
+
+.analysis-panel .diagram-btn.stress-btn:active {
+  background: #ddd6fe;
 }
 
 .analysis-panel .diagram-btn.danger {

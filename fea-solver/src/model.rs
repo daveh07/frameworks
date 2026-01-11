@@ -8,7 +8,7 @@ use crate::elements::{Material, Member, Node, Plate, Quad, Section, Support};
 use crate::error::{FEAError, FEAResult};
 use crate::loads::{DistributedLoad, LoadCombination, NodeLoad, PlateLoad, PointLoad};
 use crate::math::{self, Mat, Vec as FEVec};
-use crate::results::{AnalysisSummary, MemberForces, NodeDisplacement, Reactions};
+use crate::results::{AnalysisSummary, MemberForces, NodeDisplacement, PlateStressResult, Reactions};
 
 /// The main 3D finite element model
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -417,6 +417,115 @@ impl FEModel {
             }
         }
 
+        // Add plate stiffness
+        for plate in self.plates.values() {
+            let i_node = self.nodes.get(&plate.i_node).unwrap();
+            let j_node = self.nodes.get(&plate.j_node).unwrap();
+            let m_node = self.nodes.get(&plate.m_node).unwrap();
+            let n_node = self.nodes.get(&plate.n_node).unwrap();
+            let material = self.materials.get(&plate.material).unwrap();
+            
+            let width = plate.width.unwrap();
+            let height = plate.height.unwrap();
+            
+            // Get local stiffness matrix with specified formulation
+            let k_local = math::plate_local_stiffness_with_formulation(
+                material.e,
+                material.nu,
+                plate.thickness,
+                width,
+                height,
+                plate.kx_mod,
+                plate.ky_mod,
+                plate.formulation,
+            );
+            
+            // Get transformation matrix
+            let t = math::plate_transformation_matrix(
+                &i_node.coords(),
+                &j_node.coords(),
+                &n_node.coords(),
+            );
+            
+            // Transform to global: K_global = T^T * K_local * T
+            let k_plate_global = t.transpose() * k_local * t;
+            
+            // Assemble into global matrix - 4 nodes, each with 6 DOFs
+            let dofs = [
+                dof_map[&plate.i_node],
+                dof_map[&plate.j_node],
+                dof_map[&plate.m_node],
+                dof_map[&plate.n_node],
+            ];
+            
+            // Add all 4x4 node blocks
+            for (ni, &di) in dofs.iter().enumerate() {
+                for (nj, &dj) in dofs.iter().enumerate() {
+                    let ki = ni * 6;
+                    let kj = nj * 6;
+                    for a in 0..6 {
+                        for b in 0..6 {
+                            k_global[(di + a, dj + b)] += k_plate_global[(ki + a, kj + b)];
+                        }
+                    }
+                }
+            }
+        }
+
+        // Add quad element stiffness (same as plate but with MITC4 formulation)
+        for quad in self.quads.values() {
+            let i_node = self.nodes.get(&quad.i_node).unwrap();
+            let j_node = self.nodes.get(&quad.j_node).unwrap();
+            let m_node = self.nodes.get(&quad.m_node).unwrap();
+            let n_node = self.nodes.get(&quad.n_node).unwrap();
+            let material = self.materials.get(&quad.material).unwrap();
+            
+            // Calculate dimensions from node positions
+            let width = i_node.distance_to(j_node);
+            let height = j_node.distance_to(m_node);
+            
+            // Get local stiffness matrix (using same plate formulation for now)
+            let k_local = math::plate_local_stiffness(
+                material.e,
+                material.nu,
+                quad.thickness,
+                width,
+                height,
+                quad.kx_mod,
+                quad.ky_mod,
+            );
+            
+            // Get transformation matrix
+            let t = math::plate_transformation_matrix(
+                &i_node.coords(),
+                &j_node.coords(),
+                &n_node.coords(),
+            );
+            
+            // Transform to global
+            let k_quad_global = t.transpose() * k_local * t;
+            
+            // Assemble into global matrix
+            let dofs = [
+                dof_map[&quad.i_node],
+                dof_map[&quad.j_node],
+                dof_map[&quad.m_node],
+                dof_map[&quad.n_node],
+            ];
+            
+            for (ni, &di) in dofs.iter().enumerate() {
+                for (nj, &dj) in dofs.iter().enumerate() {
+                    let ki = ni * 6;
+                    let kj = nj * 6;
+                    for a in 0..6 {
+                        for b in 0..6 {
+                            k_global[(di + a, dj + b)] += k_quad_global[(ki + a, kj + b)];
+                        }
+                    }
+                }
+            }
+        }
+
         Ok((k_global, dof_map))
     }
 
@@ -531,6 +640,68 @@ impl FEModel {
                 for i in 0..6 {
                     p[i_dof + i] -= fer_global[i];
                     p[j_dof + i] -= fer_global[i + 6];
+                }
+            }
+        }
+
+        // Add fixed end reactions from plate pressure loads
+        for (plate_name, loads) in &self.plate_loads {
+            // Try plate first, then quad
+            let (i_node, j_node, m_node, n_node, width, height) = 
+                if let Some(plate) = self.plates.get(plate_name) {
+                    let i = self.nodes.get(&plate.i_node).unwrap();
+                    let j = self.nodes.get(&plate.j_node).unwrap();
+                    let m = self.nodes.get(&plate.m_node).unwrap();
+                    let n = self.nodes.get(&plate.n_node).unwrap();
+                    (plate.i_node.clone(), plate.j_node.clone(), plate.m_node.clone(), plate.n_node.clone(),
+                     plate.width.unwrap(), plate.height.unwrap())
+                } else if let Some(quad) = self.quads.get(plate_name) {
+                    let i = self.nodes.get(&quad.i_node).unwrap();
+                    let j = self.nodes.get(&quad.j_node).unwrap();
+                    let m = self.nodes.get(&quad.m_node).unwrap();
+                    let n = self.nodes.get(&quad.n_node).unwrap();
+                    let width = i.distance_to(j);
+                    let height = j.distance_to(m);
+                    (quad.i_node.clone(), quad.j_node.clone(), quad.m_node.clone(), quad.n_node.clone(),
+                     width, height)
+                } else {
+                    continue;
+                };
+            
+            let i_node_ref = self.nodes.get(&i_node).unwrap();
+            let j_node_ref = self.nodes.get(&j_node).unwrap();
+            let n_node_ref = self.nodes.get(&n_node).unwrap();
+            
+            let t = math::plate_transformation_matrix(
+                &i_node_ref.coords(),
+                &j_node_ref.coords(),
+                &n_node_ref.coords(),
+            );
+            
+            for load in loads {
+                let factor = combo.factor(&load.case);
+                if factor.abs() < 1e-10 {
+                    continue;
+                }
+                
+                let pressure = factor * load.pressure;
+                let fer_local = math::plate_fer_pressure(pressure, width, height);
+                
+                // Transform to global
+                let fer_global = t.transpose() * fer_local;
+                
+                // Subtract from load vector (FER is reaction, so negate)
+                let dofs = [
+                    dof_map[&i_node],
+                    dof_map[&j_node],
+                    dof_map[&m_node],
+                    dof_map[&n_node],
+                ];
+                
+                for (ni, &di) in dofs.iter().enumerate() {
+                    for a in 0..6 {
+                        p[di + a] -= fer_global[ni * 6 + a];
+                    }
                 }
             }
         }
@@ -1041,6 +1212,169 @@ impl FEModel {
             .ok_or_else(|| FEAError::NotAnalyzed)?;
         
         Ok(MemberForces::from_j_node_forces(forces))
+    }
+
+    /// Get plate stress at center (works for both Plate and Quad elements)
+    pub fn plate_stress(&self, plate_name: &str, combo_name: &str) -> FEAResult<PlateStressResult> {
+        // Try plates first, then quads
+        if let Some(plate) = self.plates.get(plate_name) {
+            let width = plate.width.ok_or(FEAError::NotAnalyzed)?;
+            let height = plate.height.ok_or(FEAError::NotAnalyzed)?;
+            let material = self.materials.get(&plate.material)
+                .ok_or_else(|| FEAError::MaterialNotFound(plate.material.clone()))?;
+            
+            // Get displacements for each node
+            let i_disp = self.nodes.get(&plate.i_node)
+                .and_then(|n| n.displacements.get(combo_name))
+                .ok_or(FEAError::NotAnalyzed)?;
+            let j_disp = self.nodes.get(&plate.j_node)
+                .and_then(|n| n.displacements.get(combo_name))
+                .ok_or(FEAError::NotAnalyzed)?;
+            let m_disp = self.nodes.get(&plate.m_node)
+                .and_then(|n| n.displacements.get(combo_name))
+                .ok_or(FEAError::NotAnalyzed)?;
+            let n_disp = self.nodes.get(&plate.n_node)
+                .and_then(|n| n.displacements.get(combo_name))
+                .ok_or(FEAError::NotAnalyzed)?;
+            
+            // Build global displacement vector
+            let mut d_global = math::plate::Vec24::zeros();
+            for (i, disp) in [i_disp, j_disp, m_disp, n_disp].iter().enumerate() {
+                for j in 0..6 {
+                    d_global[i * 6 + j] = disp[j];
+                }
+            }
+            
+            // Transform to local coordinates
+            let i_node = self.nodes.get(&plate.i_node).unwrap();
+            let j_node = self.nodes.get(&plate.j_node).unwrap();
+            let n_node = self.nodes.get(&plate.n_node).unwrap();
+            let t = math::plate_transformation_matrix(
+                &i_node.coords(),
+                &j_node.coords(),
+                &n_node.coords(),
+            );
+            let d_local = t * d_global;
+            
+            // Calculate stresses at center
+            let center_x = width / 2.0;
+            let center_y = height / 2.0;
+            
+            let membrane = math::plate_membrane_stress(
+                center_x, center_y, &d_local,
+                material.e, material.nu, plate.thickness,
+                width, height, plate.kx_mod, plate.ky_mod,
+            );
+            
+            let moments = math::plate_moments(
+                center_x, center_y, &d_local,
+                material.e, material.nu, plate.thickness,
+                width, height, plate.kx_mod, plate.ky_mod,
+            );
+            
+            // Calculate von Mises stress at plate surface from bending
+            // Bending stress at surface: sigma = 6*M / t^2 (M is moment per unit width)
+            let t2 = plate.thickness * plate.thickness;
+            let sigma_x_bend = 6.0 * moments[0] / t2;
+            let sigma_y_bend = 6.0 * moments[1] / t2;
+            let tau_xy_bend = 6.0 * moments[2] / t2;
+            
+            // Total stress = membrane + bending (at surface)
+            let sigma_x_total = membrane[0] + sigma_x_bend;
+            let sigma_y_total = membrane[1] + sigma_y_bend;
+            let tau_xy_total = membrane[2] + tau_xy_bend;
+            
+            // Von Mises from total stresses
+            let von_mises = (sigma_x_total.powi(2) - sigma_x_total * sigma_y_total + 
+                           sigma_y_total.powi(2) + 3.0 * tau_xy_total.powi(2)).sqrt();
+            
+            Ok(PlateStressResult {
+                sx: sigma_x_total,
+                sy: sigma_y_total,
+                txy: tau_xy_total,
+                von_mises,
+                mx: moments[0],
+                my: moments[1],
+                mxy: moments[2],
+            })
+        } else if let Some(quad) = self.quads.get(plate_name) {
+            // Similar for quads
+            let i_node = self.nodes.get(&quad.i_node).unwrap();
+            let j_node = self.nodes.get(&quad.j_node).unwrap();
+            let m_node = self.nodes.get(&quad.m_node).unwrap();
+            let n_node = self.nodes.get(&quad.n_node).unwrap();
+            
+            let width = i_node.distance_to(j_node);
+            let height = j_node.distance_to(m_node);
+            let material = self.materials.get(&quad.material)
+                .ok_or_else(|| FEAError::MaterialNotFound(quad.material.clone()))?;
+            
+            // Get displacements
+            let i_disp = i_node.displacements.get(combo_name).ok_or(FEAError::NotAnalyzed)?;
+            let j_disp = j_node.displacements.get(combo_name).ok_or(FEAError::NotAnalyzed)?;
+            let m_disp = m_node.displacements.get(combo_name).ok_or(FEAError::NotAnalyzed)?;
+            let n_disp = n_node.displacements.get(combo_name).ok_or(FEAError::NotAnalyzed)?;
+            
+            // Build global displacement vector
+            let mut d_global = math::plate::Vec24::zeros();
+            for (i, disp) in [i_disp, j_disp, m_disp, n_disp].iter().enumerate() {
+                for j in 0..6 {
+                    d_global[i * 6 + j] = disp[j];
+                }
+            }
+            
+            // Transform to local
+            let t = math::plate_transformation_matrix(
+                &i_node.coords(),
+                &j_node.coords(),
+                &n_node.coords(),
+            );
+            let d_local = t * d_global;
+            
+            // Calculate stresses
+            let center_x = width / 2.0;
+            let center_y = height / 2.0;
+            
+            let membrane = math::plate_membrane_stress(
+                center_x, center_y, &d_local,
+                material.e, material.nu, quad.thickness,
+                width, height, quad.kx_mod, quad.ky_mod,
+            );
+            
+            let moments = math::plate_moments(
+                center_x, center_y, &d_local,
+                material.e, material.nu, quad.thickness,
+                width, height, quad.kx_mod, quad.ky_mod,
+            );
+            
+            // Calculate bending stresses at the plate surface (z = t/2)
+            // σ = 6M/t² (from flexural stress formula σ = Mc/I where c = t/2 and I = bt³/12)
+            let t = quad.thickness;
+            let sigma_x_bend = 6.0 * moments[0] / (t * t);
+            let sigma_y_bend = 6.0 * moments[1] / (t * t);
+            let tau_xy_bend = 6.0 * moments[2] / (t * t);
+            
+            // Total stress = membrane + bending (at surface)
+            let sigma_x_total = membrane[0] + sigma_x_bend;
+            let sigma_y_total = membrane[1] + sigma_y_bend;
+            let tau_xy_total = membrane[2] + tau_xy_bend;
+            
+            // Von Mises stress from combined stresses
+            let von_mises = (sigma_x_total.powi(2) - sigma_x_total * sigma_y_total + 
+                           sigma_y_total.powi(2) + 3.0 * tau_xy_total.powi(2)).sqrt();
+            
+            Ok(PlateStressResult {
+                sx: membrane[0],
+                sy: membrane[1],
+                txy: membrane[2],
+                von_mises,
+                mx: moments[0],
+                my: moments[1],
+                mxy: moments[2],
+            })
+        } else {
+            Err(FEAError::PlateNotFound(plate_name.to_string()))
+        }
     }
 
     /// Get analysis summary

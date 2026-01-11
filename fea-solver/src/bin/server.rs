@@ -12,7 +12,7 @@ use std::net::SocketAddr;
 use tower_http::cors::{Any, CorsLayer};
 
 use fea_solver::prelude::*;
-use fea_solver::loads::{DistributedLoad, LoadDirection};
+use fea_solver::loads::{DistributedLoad, LoadDirection, PlateLoad};
 
 #[derive(Debug, Serialize)]
 struct HealthResponse {
@@ -32,11 +32,15 @@ struct ModelData {
     materials: Vec<MaterialData>,
     sections: Vec<SectionData>,
     members: Vec<MemberData>,
+    #[serde(default)]
+    plates: Vec<PlateData>,
     supports: Vec<SupportData>,
     #[serde(default)]
     node_loads: Vec<NodeLoadData>,
     #[serde(default)]
     distributed_loads: Vec<DistributedLoadData>,
+    #[serde(default)]
+    plate_loads: Vec<PlateLoadData>,
     #[serde(default)]
     load_combos: Vec<LoadComboData>,
 }
@@ -103,6 +107,35 @@ struct MemberReleasesData {
 }
 
 #[derive(Debug, Deserialize)]
+struct PlateData {
+    name: String,
+    i_node: String,
+    j_node: String,
+    m_node: String,
+    n_node: String,
+    thickness: f64,
+    material: String,
+    #[serde(default = "default_kx_mod")]
+    kx_mod: f64,
+    #[serde(default = "default_ky_mod")]
+    ky_mod: f64,
+    #[serde(default = "default_formulation")]
+    formulation: String,
+}
+
+fn default_kx_mod() -> f64 { 1.0 }
+fn default_ky_mod() -> f64 { 1.0 }
+fn default_formulation() -> String { "kirchhoff".to_string() }
+
+#[derive(Debug, Deserialize)]
+struct PlateLoadData {
+    plate: String,
+    pressure: f64,
+    #[serde(default = "default_case")]
+    case: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct SupportData {
     node: String,
     dx: bool,
@@ -166,6 +199,8 @@ struct ResultsData {
     node_displacements: Vec<NodeDisplacementResult>,
     reactions: Vec<ReactionResult>,
     member_forces: Vec<MemberForceResult>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    plate_stresses: Vec<PlateStressResult>,
     summary: SummaryResult,
 }
 
@@ -209,6 +244,26 @@ struct MemberForceResult {
     torsion_j: f64,
     moment_y_j: f64,
     moment_z_j: f64,
+}
+
+#[derive(Debug, Serialize)]
+struct PlateStressResult {
+    plate: String,
+    combo: String,
+    /// Normal stress in X direction at center (membrane)
+    sx: f64,
+    /// Normal stress in Y direction at center (membrane)
+    sy: f64,
+    /// Shear stress at center (membrane)
+    txy: f64,
+    /// Von Mises equivalent stress
+    von_mises: f64,
+    /// Bending moment Mx at center
+    mx: f64,
+    /// Bending moment My at center
+    my: f64,
+    /// Twisting moment Mxy at center
+    mxy: f64,
 }
 
 #[derive(Debug, Serialize)]
@@ -288,6 +343,29 @@ fn run_analysis(request: AnalysisRequest) -> Result<ResultsData, fea_solver::err
         model.add_member(&member.name, m)?;
     }
 
+    // Add plates (4-node shell elements)
+    for plate in request.model.plates {
+        // Parse formulation
+        let formulation = match plate.formulation.to_lowercase().as_str() {
+            "mindlin" | "mindlin-reissner" | "thick" => fea_solver::math::PlateFormulation::Mindlin,
+            "dkmq" | "discrete-kirchhoff" => fea_solver::math::PlateFormulation::DKMQ,
+            _ => fea_solver::math::PlateFormulation::Kirchhoff, // Default to Kirchhoff (thin plate)
+        };
+        
+        let p = Plate::new(
+            &plate.i_node,
+            &plate.j_node,
+            &plate.m_node,
+            &plate.n_node,
+            plate.thickness,
+            &plate.material,
+        )
+        .with_modifiers(plate.kx_mod, plate.ky_mod)
+        .with_formulation(formulation);
+        
+        model.add_plate(&plate.name, p)?;
+    }
+
     // Add supports
     for sup in request.model.supports {
         model.add_support(
@@ -321,6 +399,14 @@ fn run_analysis(request: AnalysisRequest) -> Result<ResultsData, fea_solver::err
         )?;
     }
 
+    // Add plate pressure loads
+    for load in request.model.plate_loads {
+        model.add_plate_load(
+            &load.plate,
+            PlateLoad::new(load.pressure, &load.case),
+        )?;
+    }
+
     // Add load combinations
     for combo in request.model.load_combos {
         let mut lc = LoadCombination::new(&combo.name);
@@ -350,6 +436,7 @@ fn run_analysis(request: AnalysisRequest) -> Result<ResultsData, fea_solver::err
     let mut node_displacements = Vec::new();
     let mut reactions = Vec::new();
     let mut member_forces = Vec::new();
+    let mut plate_stresses = Vec::new();
 
     for combo in &combo_names {
         // Node displacements
@@ -408,6 +495,39 @@ fn run_analysis(request: AnalysisRequest) -> Result<ResultsData, fea_solver::err
                 });
             }
         }
+
+        // Plate stresses (for both plates and quads)
+        for plate_name in model.plates.keys() {
+            if let Ok(stress) = model.plate_stress(plate_name, combo) {
+                plate_stresses.push(PlateStressResult {
+                    plate: plate_name.clone(),
+                    combo: combo.clone(),
+                    sx: stress.sx,
+                    sy: stress.sy,
+                    txy: stress.txy,
+                    von_mises: stress.von_mises,
+                    mx: stress.mx,
+                    my: stress.my,
+                    mxy: stress.mxy,
+                });
+            }
+        }
+
+        for quad_name in model.quads.keys() {
+            if let Ok(stress) = model.plate_stress(quad_name, combo) {
+                plate_stresses.push(PlateStressResult {
+                    plate: quad_name.clone(),
+                    combo: combo.clone(),
+                    sx: stress.sx,
+                    sy: stress.sy,
+                    txy: stress.txy,
+                    von_mises: stress.von_mises,
+                    mx: stress.mx,
+                    my: stress.my,
+                    mxy: stress.mxy,
+                });
+            }
+        }
     }
 
     // Summary
@@ -417,6 +537,7 @@ fn run_analysis(request: AnalysisRequest) -> Result<ResultsData, fea_solver::err
         node_displacements,
         reactions,
         member_forces,
+        plate_stresses,
         summary: SummaryResult {
             max_displacement: summary.max_displacement,
             max_disp_node: summary.max_disp_node,

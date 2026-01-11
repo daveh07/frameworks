@@ -58,8 +58,9 @@ pub mod prelude {
     pub use crate::loads::{
         DistributedLoad, LoadCase, LoadCombination, NodeLoad, PlateLoad, PointLoad,
     };
+    pub use crate::math::PlateFormulation;
     pub use crate::model::FEModel;
-    pub use crate::results::{MemberForces, NodeDisplacement, PlateStress, Reactions};
+    pub use crate::results::{MemberForces, NodeDisplacement, PlateStress, PlateStressResult, Reactions};
 }
 
 #[cfg(feature = "wasm")]

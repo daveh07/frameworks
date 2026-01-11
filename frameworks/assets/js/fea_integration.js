@@ -12,6 +12,11 @@ if (typeof window.diagramScale === 'undefined') {
     window.diagramScale = 1.0;
 }
 
+// Initialize label scale if not already set
+if (typeof window.feaLabelScale === 'undefined') {
+    window.feaLabelScale = 1.0;
+}
+
 // Track current diagram type for refresh on scale change
 window.currentDiagramType = null;
 
@@ -50,9 +55,9 @@ window.refreshCurrentDiagram = function() {
     }
 };
 
-// Function to set diagram scale from UI slider
+// Function to set diagram scale from UI slider (0-100 range)
 window.setDiagramScale = function(scale) {
-    window.diagramScale = Math.max(0.1, Math.min(10, scale));
+    window.diagramScale = Math.max(0, Math.min(100, scale));
     window.refreshCurrentDiagram();
 };
 
@@ -102,6 +107,8 @@ window.extractFEAStructure = function(materialConfig, beamSectionConfig) {
         materials: [],
         sections: [],
         members: [],
+        plates: [],
+        plate_loads: [],
         supports: [],
         node_loads: [],
         distributed_loads: [],
@@ -111,6 +118,7 @@ window.extractFEAStructure = function(materialConfig, beamSectionConfig) {
     // Node name mapping (index -> name)
     const nodeNameMap = new Map();
     const nodePositionMap = new Map(); // uuid -> node name
+    const plateNameMap = new Map(); // uuid -> plate name
 
     // Extract nodes from nodesGroup
     console.log('Node count:', sceneData.nodesGroup.children.length);
@@ -235,6 +243,107 @@ window.extractFEAStructure = function(materialConfig, beamSectionConfig) {
         }
     });
 
+    // Extract plates from platesGroup (mesh elements)
+    console.log('=== Extracting Plates ===');
+    let plateIdx = 0;
+    if (sceneData.platesGroup) {
+        console.log('Plate count:', sceneData.platesGroup.children.length);
+        sceneData.platesGroup.children.forEach((plate) => {
+            const plateThickness = plate.userData.thickness || 0.2;
+            
+            // Check if plate has a mesh (quad elements)
+            if (plate.userData.mesh) {
+                // Find the mesh visualization group
+                const meshViz = plate.children.find(c => c.userData.isMeshViz);
+                if (meshViz) {
+                    console.log(`Plate mesh elements: ${meshViz.children.length}`);
+                    meshViz.children.forEach((element) => {
+                        if (element.userData.isMeshElement && element.userData.nodes && element.userData.nodes.length === 4) {
+                            const nodes = element.userData.nodes;
+                            
+                            // Get node names for the 4 corners
+                            // PyNite convention: i, j, m, n in counter-clockwise order
+                            const iNodeName = nodePositionMap.get(nodes[0].uuid);
+                            const jNodeName = nodePositionMap.get(nodes[1].uuid);
+                            const mNodeName = nodePositionMap.get(nodes[2].uuid);
+                            const nNodeName = nodePositionMap.get(nodes[3].uuid);
+                            
+                            if (iNodeName && jNodeName && mNodeName && nNodeName) {
+                                const plateName = `P${plateIdx + 1}`;
+                                plateNameMap.set(element.uuid, plateName);
+                                
+                                // Store node names in element userData for deformation visualization
+                                element.userData.nodeNames = [iNodeName, jNodeName, mNodeName, nNodeName];
+                                
+                                // Get formulation from plate userData or global setting
+                                // Options: "kirchhoff" (thin), "mindlin" (thick), "dkmq" (general)
+                                const formulation = element.userData?.formulation || 
+                                                   plate.userData?.formulation ||
+                                                   window.plateFormulation || 
+                                                   "kirchhoff";
+                                
+                                model.plates.push({
+                                    name: plateName,
+                                    i_node: iNodeName,
+                                    j_node: jNodeName,
+                                    m_node: mNodeName,
+                                    n_node: nNodeName,
+                                    thickness: plateThickness,
+                                    material: model.materials[0].name,
+                                    kx_mod: 1.0,
+                                    ky_mod: 1.0,
+                                    formulation: formulation
+                                });
+                                console.log(`Plate ${plateName}: ${iNodeName} -> ${jNodeName} -> ${mNodeName} -> ${nNodeName}, t=${plateThickness}, formulation=${formulation}`);
+                                plateIdx++;
+                            } else {
+                                console.warn('Plate element has nodes not in nodePositionMap');
+                            }
+                        }
+                    });
+                }
+            } else {
+                // Unmeshed plate - create single plate from corner nodes
+                if (plate.userData.nodes && plate.userData.nodes.length === 4) {
+                    const nodes = plate.userData.nodes;
+                    const iNodeName = nodePositionMap.get(nodes[0].uuid);
+                    const jNodeName = nodePositionMap.get(nodes[1].uuid);
+                    const mNodeName = nodePositionMap.get(nodes[2].uuid);
+                    const nNodeName = nodePositionMap.get(nodes[3].uuid);
+                    
+                    if (iNodeName && jNodeName && mNodeName && nNodeName) {
+                        const plateName = `P${plateIdx + 1}`;
+                        plateNameMap.set(plate.uuid, plateName);
+                        
+                        // Store node names in plate userData for deformation visualization
+                        plate.userData.nodeNames = [iNodeName, jNodeName, mNodeName, nNodeName];
+                        
+                        // Get formulation from plate userData or global setting
+                        const formulation = plate.userData?.formulation ||
+                                           window.plateFormulation || 
+                                           "kirchhoff";
+                        
+                        model.plates.push({
+                            name: plateName,
+                            i_node: iNodeName,
+                            j_node: jNodeName,
+                            m_node: mNodeName,
+                            n_node: nNodeName,
+                            thickness: plateThickness,
+                            material: model.materials[0].name,
+                            kx_mod: 1.0,
+                            ky_mod: 1.0,
+                            formulation: formulation
+                        });
+                        console.log(`Plate ${plateName} (unmeshed): ${iNodeName} -> ${jNodeName} -> ${mNodeName} -> ${nNodeName}, t=${plateThickness}, formulation=${formulation}`);
+                        plateIdx++;
+                    }
+                }
+            }
+        });
+    }
+    console.log('Total plates extracted:', model.plates.length);
+
     // Extract supports from constraint symbols
     const constraintGroups = [];
     sceneData.scene.children.forEach(child => {
@@ -316,22 +425,40 @@ window.extractFEAStructure = function(materialConfig, beamSectionConfig) {
         }
     });
 
-    // Extract point loads
+    // Extract point loads (from structural nodes and mesh nodes)
     if (window.pointLoads && window.pointLoads.length > 0) {
         window.pointLoads.forEach((load) => {
-            const nodeName = nodePositionMap.get(load.nodeUuid);
-            if (nodeName) {
+            // Handle structural node loads (nodeUuid)
+            if (load.nodeUuid) {
+                const nodeName = nodePositionMap.get(load.nodeUuid);
+                if (nodeName) {
+                    model.node_loads.push({
+                        node: nodeName,
+                        fx: load.fx || 0,
+                        fy: load.fy || 0,
+                        fz: load.fz || 0,
+                        mx: load.mx || 0,
+                        my: load.my || 0,
+                        mz: load.mz || 0,
+                        case: 'Case 1'
+                    });
+                    console.log(`Point load at structural node ${nodeName}:`, load);
+                }
+            }
+            // Handle mesh node loads (meshNodeName with position)
+            else if (load.meshNodeName) {
+                // Mesh node name is already the solver node name (from extraction)
                 model.node_loads.push({
-                    node: nodeName,
+                    node: load.meshNodeName,
                     fx: load.fx || 0,
                     fy: load.fy || 0,
                     fz: load.fz || 0,
-                    mx: load.mx || 0,
-                    my: load.my || 0,
-                    mz: load.mz || 0,
+                    mx: 0,
+                    my: 0,
+                    mz: 0,
                     case: 'Case 1'
                 });
-                console.log(`Point load at ${nodeName}:`, load);
+                console.log(`Point load at mesh node ${load.meshNodeName}:`, load);
             }
         });
     }
@@ -359,6 +486,106 @@ window.extractFEAStructure = function(materialConfig, beamSectionConfig) {
         });
     }
 
+    // Extract plate loads from elementLoads Map (mesh element pressure loads)
+    if (window.elementLoads && window.elementLoads.size > 0) {
+        console.log('=== Extracting Plate Loads ===');
+        window.elementLoads.forEach((loads, elementUuid) => {
+            const plateName = plateNameMap.get(elementUuid);
+            if (!plateName) {
+                console.warn('Element UUID not found in plateNameMap:', elementUuid);
+                return;
+            }
+            
+            loads.forEach(load => {
+                if (load.type === 'pressure_element') {
+                    // Convert from kPa (UI units) to Pa (solver units) - kPa = kN/m^2
+                    // 1 kPa = 1000 Pa = 1000 N/m^2
+                    const pressure_Pa = load.magnitude * 1000;
+                    model.plate_loads.push({
+                        plate: plateName,
+                        pressure: pressure_Pa,
+                        case: 'Case 1'
+                    });
+                    console.log(`Pressure load on ${plateName}: ${load.magnitude} kPa = ${pressure_Pa} Pa`);
+                }
+            });
+        });
+    }
+
+    // Also check plateLoads (loads applied to entire plates or directly to mesh elements)
+    if (window.plateLoads && window.plateLoads.size > 0) {
+        console.log('=== Extracting Plate-level Loads ===');
+        console.log('plateLoads size:', window.plateLoads.size);
+        
+        window.plateLoads.forEach((loads, plateUuid) => {
+            console.log('Processing plateLoad for UUID:', plateUuid);
+            
+            // First check if this UUID is a mesh element (directly in plateNameMap)
+            const directPlateName = plateNameMap.get(plateUuid);
+            if (directPlateName) {
+                // This is a mesh element UUID - apply load directly
+                loads.forEach(load => {
+                    if (load.type === 'pressure') {
+                        const pressure_Pa = load.magnitude * 1000;
+                        model.plate_loads.push({
+                            plate: directPlateName,
+                            pressure: pressure_Pa,
+                            case: 'Case 1'
+                        });
+                        console.log(`Pressure load on mesh element ${directPlateName}: ${load.magnitude} kPa = ${pressure_Pa} Pa`);
+                    }
+                });
+                return;
+            }
+            
+            // Otherwise, check if it's a parent plate UUID
+            if (!sceneData.platesGroup) return;
+            const plate = sceneData.platesGroup.children.find(p => p.uuid === plateUuid);
+            if (!plate) {
+                console.warn('UUID not found in plateNameMap or platesGroup:', plateUuid);
+                return;
+            }
+            
+            const meshViz = plate.children.find(c => c.userData.isMeshViz);
+            if (meshViz) {
+                // Apply to all mesh elements of this plate
+                meshViz.children.forEach(element => {
+                    const plateName = plateNameMap.get(element.uuid);
+                    if (plateName) {
+                        loads.forEach(load => {
+                            if (load.type === 'pressure') {
+                                const pressure_Pa = load.magnitude * 1000;
+                                model.plate_loads.push({
+                                    plate: plateName,
+                                    pressure: pressure_Pa,
+                                    case: 'Case 1'
+                                });
+                                console.log(`Pressure load distributed to ${plateName}: ${load.magnitude} kPa`);
+                            }
+                        });
+                    }
+                });
+            } else {
+                // Unmeshed plate - apply directly
+                const plateName = plateNameMap.get(plateUuid);
+                if (plateName) {
+                    loads.forEach(load => {
+                        if (load.type === 'pressure') {
+                            const pressure_Pa = load.magnitude * 1000;
+                            model.plate_loads.push({
+                                plate: plateName,
+                                pressure: pressure_Pa,
+                                case: 'Case 1'
+                            });
+                            console.log(`Pressure load on unmeshed plate ${plateName}: ${load.magnitude} kPa`);
+                        }
+                    });
+                }
+            }
+        });
+        console.log('Total plate loads extracted:', model.plate_loads.length);
+    }
+
     // Add default load combination if not specified
     if (model.load_combos.length === 0) {
         model.load_combos.push({
@@ -370,9 +597,15 @@ window.extractFEAStructure = function(materialConfig, beamSectionConfig) {
     console.log('=== Final FEA Model ===');
     console.log('Nodes:', model.nodes.length);
     console.log('Members:', model.members.length);
+    console.log('Plates:', model.plates.length);
     console.log('Supports:', model.supports.length);
     console.log('Point loads:', model.node_loads.length);
     console.log('Distributed loads:', model.distributed_loads.length);
+    console.log('Plate loads:', model.plate_loads.length);
+
+    // Export plate name map for stress visualization
+    window.feaPlateNameMap = plateNameMap;
+    console.log('Plate name map exported:', plateNameMap.size, 'entries');
 
     return model;
 };
@@ -463,8 +696,9 @@ window.runFEAAnalysis = async function(materialConfig, beamSectionConfig, analys
         return { error };
     }
 
-    if (model.members.length === 0) {
-        const error = 'No members found in the model';
+    // Allow analysis if we have either members or plates
+    if (model.members.length === 0 && model.plates.length === 0) {
+        const error = 'No members or plates found in the model';
         if (window.addSolverLog) window.addSolverLog(error, 'error');
         return { error };
     }
@@ -476,7 +710,7 @@ window.runFEAAnalysis = async function(materialConfig, beamSectionConfig, analys
     }
 
     if (window.addSolverLog) {
-        window.addSolverLog(`Model: ${model.nodes.length} nodes, ${model.members.length} members, ${model.supports.length} supports`, 'info');
+        window.addSolverLog(`Model: ${model.nodes.length} nodes, ${model.members.length} members, ${model.plates.length} plates, ${model.supports.length} supports`, 'info');
         window.addSolverLog('Sending to FEA solver...', 'info');
     }
 
@@ -599,18 +833,44 @@ window.clearFEADiagrams = function() {
     if (!sceneData) return;
 
     window.feaDiagramObjects.forEach(obj => {
-        sceneData.scene.remove(obj);
-        if (obj.geometry) obj.geometry.dispose();
-        if (obj.material) {
-            if (Array.isArray(obj.material)) {
-                obj.material.forEach(m => m.dispose());
-            } else {
-                obj.material.dispose();
+        // Handle stress coloring - restore original material
+        if (obj.type === 'stress_color' && obj.mesh) {
+            const mesh = obj.mesh;
+            if (mesh.userData && mesh.userData.originalMaterial) {
+                // Restore from cloned original material
+                const origMat = mesh.userData.originalMaterial;
+                mesh.material.color.copy(origMat.color);
+                mesh.material.transparent = origMat.transparent;
+                mesh.material.opacity = origMat.opacity;
+                mesh.material.depthWrite = origMat.depthWrite !== undefined ? origMat.depthWrite : true;
+                mesh.material.depthTest = origMat.depthTest !== undefined ? origMat.depthTest : true;
+                mesh.material.needsUpdate = true;
+                
+                // Clean up
+                delete mesh.userData.originalMaterial;
+                delete mesh.userData.hasStressOverlay;
+            }
+        } else {
+            // Remove from scene (for drawn diagram objects)
+            sceneData.scene.remove(obj);
+            if (obj.geometry) obj.geometry.dispose();
+            if (obj.material) {
+                if (Array.isArray(obj.material)) {
+                    obj.material.forEach(m => m.dispose());
+                } else {
+                    obj.material.dispose();
+                }
             }
         }
     });
     window.feaDiagramObjects = [];
     window.currentDiagramType = null;
+    
+    // Also remove any stress legend
+    const existingLegend = document.getElementById('stress-legend');
+    if (existingLegend) {
+        existingLegend.remove();
+    }
     
     console.log('FEA diagrams cleared');
 };
@@ -658,8 +918,8 @@ window.showFEADeformedShape = function(scale = 50) {
     });
 
     // Auto-scale: make max displacement visible as fraction of structure size
-    // Scale 0-20 maps linearly: scale 0 -> 0%, scale 10 -> 5%, scale 20 -> 10%
-    const targetDeflectionRatio = (scale / 20) * 0.10; // 0% to 10% range
+    // Scale 0-100 maps linearly: scale 0 -> 0%, scale 50 -> 25%, scale 100 -> 50%
+    const targetDeflectionRatio = (scale / 100) * 0.50; // 0% to 50% range
     const autoScale = maxTransDisp > 0 ? (maxDim * targetDeflectionRatio) / maxTransDisp : scale;
     console.log('Auto-scale factor:', autoScale.toFixed(1), 'target ratio:', (targetDeflectionRatio*100).toFixed(2), '%');
 
@@ -840,26 +1100,60 @@ window.showFEADeformedShape = function(scale = 50) {
 
     console.log('Deformed members drawn:', membersDrawn);
 
-    // Draw deformed node markers - small cyan spheres at displaced positions
-    // Only show lateral/transverse displacements, not axial shortening
-    const nodeGeometry = new THREE.SphereGeometry(0.1, 12, 12);
-    const nodeMaterial = new THREE.MeshBasicMaterial({ color: deformedColor });
+    // Draw deformed node markers - black "+" crosses at displaced positions
+    // Create a "+" cross shape using lines
+    function createCrossMarker(position, size = 0.08) {
+        const crossGroup = new THREE.Group();
+        const material = new THREE.LineBasicMaterial({ color: 0x000000, linewidth: 2 });
+        
+        // Horizontal line
+        const hGeom = new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(-size, 0, 0),
+            new THREE.Vector3(size, 0, 0)
+        ]);
+        const hLine = new THREE.Line(hGeom, material);
+        crossGroup.add(hLine);
+        
+        // Vertical line (in Y for horizontal plates, adjust for vertical)
+        const vGeom = new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(0, -size, 0),
+            new THREE.Vector3(0, size, 0)
+        ]);
+        const vLine = new THREE.Line(vGeom, material);
+        crossGroup.add(vLine);
+        
+        // Z-direction line for 3D visibility
+        const zGeom = new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(0, 0, -size),
+            new THREE.Vector3(0, 0, size)
+        ]);
+        const zLine = new THREE.Line(zGeom, material);
+        crossGroup.add(zLine);
+        
+        crossGroup.position.copy(position);
+        return crossGroup;
+    }
     
     model.nodes.forEach(node => {
         const pos = nodePos.get(node.name);
         const disp = dispMap.get(node.name) || { dx: 0, dy: 0, dz: 0 };
         
         if (pos) {
-            const marker = new THREE.Mesh(nodeGeometry, nodeMaterial);
+            // Skip nodes with negligible total displacement
+            const totalDisp = Math.sqrt(disp.dx*disp.dx + disp.dy*disp.dy + disp.dz*disp.dz);
+            if (totalDisp < 1e-10) return;
+            
             // Show horizontal (sway) displacements at full scale
             // For vertical displacement, check if node is at base (fixed) - don't move it
             const isBaseNode = Math.abs(pos.y) < 0.01;  // At ground level
             
-            marker.position.set(
+            const markerPos = new THREE.Vector3(
                 pos.x + disp.dx * autoScale, 
-                isBaseNode ? pos.y : pos.y + disp.dy * autoScale,  // Don't move base nodes vertically
+                isBaseNode ? pos.y : pos.y + disp.dy * autoScale,
                 pos.z + disp.dz * autoScale
             );
+            
+            const marker = createCrossMarker(markerPos);
             sceneData.scene.add(marker);
             window.feaDiagramObjects.push(marker);
         }
@@ -886,6 +1180,166 @@ window.showFEADeformedShape = function(scale = 50) {
         const labelText = `x=${(disp.dx*1000).toFixed(2)}mm\ny=${(disp.dy*1000).toFixed(2)}mm\nz=${(disp.dz*1000).toFixed(2)}mm`;
         addMultiLineLabelClean(labelPos, labelText, sceneData);
     });
+
+    // ======== PLATE DEFORMATION ========
+    // Draw deformed plate mesh using node displacements
+    if (sceneData.platesGroup && sceneData.platesGroup.children.length > 0) {
+        console.log('Drawing deformed plates:', sceneData.platesGroup.children.length);
+        
+        // Deformed mesh color - slightly lighter blue
+        const deformedMeshColor = 0x40c8ff;
+        
+        sceneData.platesGroup.children.forEach((plateGroup, plateIdx) => {
+            const meshViz = plateGroup.children.find(c => c.userData && c.userData.isMeshViz);
+            
+            if (meshViz && meshViz.children.length > 0) {
+                // Process each mesh element
+                meshViz.children.forEach((element, elemIdx) => {
+                    if (!element.userData || !element.userData.isMeshElement) return;
+                    
+                    // Get the node names for this element from userData
+                    const nodeNames = element.userData.nodeNames || [];
+                    if (nodeNames.length !== 4) {
+                        // Try to get from geometry positions if nodeNames not stored
+                        return;
+                    }
+                    
+                    // Get displaced positions for each corner
+                    const deformedCorners = [];
+                    let hasDisplacement = false;
+                    
+                    nodeNames.forEach(nodeName => {
+                        const pos = nodePos.get(nodeName);
+                        const disp = dispMap.get(nodeName) || { dx: 0, dy: 0, dz: 0 };
+                        
+                        if (pos) {
+                            const defPos = new THREE.Vector3(
+                                pos.x + disp.dx * autoScale,
+                                pos.y + disp.dy * autoScale,
+                                pos.z + disp.dz * autoScale
+                            );
+                            deformedCorners.push(defPos);
+                            
+                            if (Math.abs(disp.dx) > 1e-10 || Math.abs(disp.dy) > 1e-10 || Math.abs(disp.dz) > 1e-10) {
+                                hasDisplacement = true;
+                            }
+                        }
+                    });
+                    
+                    if (deformedCorners.length === 4 && hasDisplacement) {
+                        // Create deformed quad mesh
+                        const shape = new THREE.Shape();
+                        
+                        // Create BufferGeometry for the deformed quad
+                        const geometry = new THREE.BufferGeometry();
+                        const vertices = new Float32Array([
+                            // First triangle
+                            deformedCorners[0].x, deformedCorners[0].y, deformedCorners[0].z,
+                            deformedCorners[1].x, deformedCorners[1].y, deformedCorners[1].z,
+                            deformedCorners[2].x, deformedCorners[2].y, deformedCorners[2].z,
+                            // Second triangle
+                            deformedCorners[0].x, deformedCorners[0].y, deformedCorners[0].z,
+                            deformedCorners[2].x, deformedCorners[2].y, deformedCorners[2].z,
+                            deformedCorners[3].x, deformedCorners[3].y, deformedCorners[3].z,
+                        ]);
+                        geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+                        geometry.computeVertexNormals();
+                        
+                        // Deformed mesh material - semi-transparent cyan
+                        const material = new THREE.MeshBasicMaterial({
+                            color: deformedMeshColor,
+                            transparent: true,
+                            opacity: 0.4,
+                            side: THREE.DoubleSide,
+                            depthWrite: false
+                        });
+                        
+                        const mesh = new THREE.Mesh(geometry, material);
+                        sceneData.scene.add(mesh);
+                        window.feaDiagramObjects.push(mesh);
+                        
+                        // Add wireframe outline for the deformed element
+                        const edgeGeometry = new THREE.BufferGeometry().setFromPoints([
+                            deformedCorners[0], deformedCorners[1],
+                            deformedCorners[1], deformedCorners[2],
+                            deformedCorners[2], deformedCorners[3],
+                            deformedCorners[3], deformedCorners[0]
+                        ]);
+                        const edgeMaterial = new THREE.LineBasicMaterial({ 
+                            color: deformedColor, 
+                            linewidth: 2 
+                        });
+                        const edges = new THREE.LineSegments(edgeGeometry, edgeMaterial);
+                        sceneData.scene.add(edges);
+                        window.feaDiagramObjects.push(edges);
+                    }
+                });
+            } else {
+                // Unmeshed plate - handle as single element
+                // Get plate node names from userData (set during extraction)
+                const nodeNames = plateGroup.userData.nodeNames;
+                if (nodeNames && nodeNames.length === 4) {
+                    const deformedCorners = [];
+                    let hasDisplacement = false;
+                    
+                    nodeNames.forEach(nodeName => {
+                        const pos = nodePos.get(nodeName);
+                        const disp = dispMap.get(nodeName) || { dx: 0, dy: 0, dz: 0 };
+                        
+                        if (pos) {
+                            deformedCorners.push(new THREE.Vector3(
+                                pos.x + disp.dx * autoScale,
+                                pos.y + disp.dy * autoScale,
+                                pos.z + disp.dz * autoScale
+                            ));
+                            if (Math.abs(disp.dx) > 1e-10 || Math.abs(disp.dy) > 1e-10 || Math.abs(disp.dz) > 1e-10) {
+                                hasDisplacement = true;
+                            }
+                        }
+                    });
+                    
+                    if (deformedCorners.length === 4 && hasDisplacement) {
+                        // Create deformed quad
+                        const geometry = new THREE.BufferGeometry();
+                        const vertices = new Float32Array([
+                            deformedCorners[0].x, deformedCorners[0].y, deformedCorners[0].z,
+                            deformedCorners[1].x, deformedCorners[1].y, deformedCorners[1].z,
+                            deformedCorners[2].x, deformedCorners[2].y, deformedCorners[2].z,
+                            deformedCorners[0].x, deformedCorners[0].y, deformedCorners[0].z,
+                            deformedCorners[2].x, deformedCorners[2].y, deformedCorners[2].z,
+                            deformedCorners[3].x, deformedCorners[3].y, deformedCorners[3].z,
+                        ]);
+                        geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+                        geometry.computeVertexNormals();
+                        
+                        const material = new THREE.MeshBasicMaterial({
+                            color: deformedMeshColor,
+                            transparent: true,
+                            opacity: 0.4,
+                            side: THREE.DoubleSide,
+                            depthWrite: false
+                        });
+                        
+                        const mesh = new THREE.Mesh(geometry, material);
+                        sceneData.scene.add(mesh);
+                        window.feaDiagramObjects.push(mesh);
+                        
+                        // Wireframe
+                        const edgeGeometry = new THREE.BufferGeometry().setFromPoints([
+                            deformedCorners[0], deformedCorners[1],
+                            deformedCorners[1], deformedCorners[2],
+                            deformedCorners[2], deformedCorners[3],
+                            deformedCorners[3], deformedCorners[0]
+                        ]);
+                        const edges = new THREE.LineSegments(edgeGeometry, 
+                            new THREE.LineBasicMaterial({ color: deformedColor }));
+                        sceneData.scene.add(edges);
+                        window.feaDiagramObjects.push(edges);
+                    }
+                }
+            }
+        });
+    }
 
     if (window.addSolverLog) {
         window.addSolverLog(`Deformed shape displayed (scale: ${scale}x, auto-factor: ${autoScale.toFixed(0)})`, 'info');
@@ -1904,7 +2358,9 @@ window.showFEAReactions = function(scale = 0.001) {
 };
 
 // Helper function to add clean text label (no background)
+// Uses window.feaLabelScale for dynamic sizing
 function addDiagramLabelClean(position, text, sceneData) {
+    const labelScale = window.feaLabelScale || 1.0;
     const canvas = document.createElement('canvas');
     const context = canvas.getContext('2d');
     const dpr = 2; // Higher resolution
@@ -1931,14 +2387,16 @@ function addDiagramLabelClean(position, text, sceneData) {
     const sprite = new THREE.Sprite(spriteMaterial);
     
     sprite.position.copy(position);
-    sprite.scale.set(1.2, 0.3, 1);  // Bigger scale
+    sprite.scale.set(1.2 * labelScale, 0.3 * labelScale, 1);  // Apply label scale
     
     sceneData.scene.add(sprite);
     window.feaDiagramObjects.push(sprite);
 }
 
 // Helper function to add multi-line label for deflections
+// Uses window.feaLabelScale for dynamic sizing
 function addMultiLineLabelClean(position, text, sceneData) {
+    const labelScale = window.feaLabelScale || 1.0;
     const lines = text.split('\n');
     const canvas = document.createElement('canvas');
     const context = canvas.getContext('2d');
@@ -1970,7 +2428,7 @@ function addMultiLineLabelClean(position, text, sceneData) {
     
     sprite.position.copy(position);
     const aspectRatio = canvas.width / canvas.height;
-    sprite.scale.set(1.0 * aspectRatio, 1.0, 1);  // Maintain aspect ratio
+    sprite.scale.set(1.0 * aspectRatio * labelScale, 1.0 * labelScale, 1);  // Apply label scale
     
     sceneData.scene.add(sprite);
     window.feaDiagramObjects.push(sprite);
@@ -2017,4 +2475,444 @@ window.getFEAResultsSummary = function() {
     };
 };
 
+// ========================
+// Plate Stress Visualization
+// ========================
+
+/**
+ * Show von Mises stress contour on plate elements
+ */
+window.showPlateVonMisesStress = function() {
+    window.showPlateStress('von_mises');
+};
+
+/**
+ * Show specific stress component on plate elements with smooth interpolation
+ * Uses node-averaged stresses and vertex colors for smooth contour (like CalculiX)
+ * @param {string} stressType - 'von_mises', 'sx', 'sy', 'txy', 'mx', 'my', 'mxy'
+ */
+window.showPlateStress = function(stressType = 'von_mises') {
+    const results = window.feaResults;
+    if (!results) {
+        console.warn('No FEA results available');
+        return;
+    }
+    
+    // Clear previous diagrams
+    window.clearFEADiagrams();
+    window.currentDiagramType = 'plate_stress_' + stressType;
+    
+    const sceneData = window.sceneData;
+    if (!sceneData) {
+        console.warn('No scene data available (window.sceneData is null)');
+        return;
+    }
+    
+    // Get plate stress results
+    const plateStresses = results.plate_stresses || [];
+    if (plateStresses.length === 0) {
+        console.log('No plate stress results available');
+        return;
+    }
+    
+    // Build plate name to stress map
+    const plateStressMap = new Map();
+    plateStresses.forEach(ps => {
+        plateStressMap.set(ps.plate, ps);
+    });
+    
+    const plateNameMap = window.feaPlateNameMap || new Map();
+    
+    // Use platesGroup from sceneData
+    if (!sceneData.platesGroup) {
+        console.warn('No platesGroup found in sceneData');
+        return;
+    }
+    
+    // Step 1: Build node stress accumulator
+    // For each node, collect all stress values from elements that share it
+    const nodeStressAccum = new Map(); // nodeName -> {sum: number, count: number}
+    
+    let plateElementIndex = 0;
+    sceneData.platesGroup.children.forEach((plate, plateIdx) => {
+        const meshViz = plate.children.find(c => c.userData && c.userData.isMeshViz);
+        
+        if (meshViz) {
+            meshViz.children.forEach((element) => {
+                if (element.userData && element.userData.isMeshElement) {
+                    let plateName = plateNameMap.get(element.uuid);
+                    if (!plateName) {
+                        plateElementIndex++;
+                        plateName = `P${plateElementIndex}`;
+                    }
+                    
+                    const stressData = plateStressMap.get(plateName);
+                    if (stressData) {
+                        const value = (stressData[stressType] ?? stressData.von_mises ?? 0);
+                        const nodeNames = element.userData.nodeNames || [];
+                        
+                        // Add this element's stress to each of its nodes
+                        nodeNames.forEach(nodeName => {
+                            if (!nodeStressAccum.has(nodeName)) {
+                                nodeStressAccum.set(nodeName, { sum: 0, count: 0 });
+                            }
+                            const accum = nodeStressAccum.get(nodeName);
+                            accum.sum += value;
+                            accum.count++;
+                        });
+                    }
+                }
+            });
+        } else {
+            // Unmeshed plate
+            plateElementIndex++;
+            let plateName = plateNameMap.get(plate.uuid) || `P${plateElementIndex}`;
+            const stressData = plateStressMap.get(plateName);
+            if (stressData) {
+                const value = (stressData[stressType] ?? stressData.von_mises ?? 0);
+                const nodeNames = plate.userData.nodeNames || [];
+                nodeNames.forEach(nodeName => {
+                    if (!nodeStressAccum.has(nodeName)) {
+                        nodeStressAccum.set(nodeName, { sum: 0, count: 0 });
+                    }
+                    const accum = nodeStressAccum.get(nodeName);
+                    accum.sum += value;
+                    accum.count++;
+                });
+            }
+        }
+    });
+    
+    // Step 2: Calculate averaged node stresses
+    const nodeStressMap = new Map(); // nodeName -> averaged stress value
+    nodeStressAccum.forEach((accum, nodeName) => {
+        nodeStressMap.set(nodeName, accum.count > 0 ? accum.sum / accum.count : 0);
+    });
+    
+    console.log(`Built node stress map with ${nodeStressMap.size} nodes`);
+    
+    // Find min/max from node-averaged values for color scaling
+    let minStress = Infinity;
+    let maxStress = -Infinity;
+    nodeStressMap.forEach(value => {
+        if (value < minStress) minStress = value;
+        if (value > maxStress) maxStress = value;
+    });
+    
+    // Handle edge case where all stresses are equal
+    if (minStress === maxStress) {
+        minStress -= 0.5;
+        maxStress += 0.5;
+    }
+    if (!isFinite(minStress)) minStress = 0;
+    if (!isFinite(maxStress)) maxStress = 1;
+    
+    const stressRange = maxStress - minStress;
+    
+    console.log(`Plate ${stressType} stress range: ${minStress.toExponential(2)} to ${maxStress.toExponential(2)}`);
+    
+    // Color function using CalculiX-style jet colormap (dark blue -> blue -> cyan -> green -> yellow -> orange -> red -> dark red)
+    // IMPORTANT: THREE.Color.setRGB expects LINEAR values. The stops below are specified in sRGB.
+    // Convert sRGB -> linear to avoid the "neon/too bright" look.
+    function getStressColor(value) {
+        const t = Math.max(0, Math.min(1, (value - minStress) / stressRange));
+        const color = new THREE.Color();
+
+        function srgbToLinear(c) {
+            return (c <= 0.04045) ? (c / 12.92) : Math.pow((c + 0.055) / 1.055, 2.4);
+        }
+        
+        // CalculiX-style 13-band jet colormap (darker, more saturated)
+        // These are the classic FEA colors - from dark blue to dark red
+        const colorStops = [
+            { t: 0.000, r: 0.00, g: 0.00, b: 0.50 },  // Dark blue
+            { t: 0.083, r: 0.00, g: 0.00, b: 1.00 },  // Blue
+            { t: 0.167, r: 0.00, g: 0.50, b: 1.00 },  // Light blue
+            { t: 0.250, r: 0.00, g: 1.00, b: 1.00 },  // Cyan
+            { t: 0.333, r: 0.00, g: 1.00, b: 0.50 },  // Cyan-green
+            { t: 0.417, r: 0.00, g: 1.00, b: 0.00 },  // Green
+            { t: 0.500, r: 0.50, g: 1.00, b: 0.00 },  // Yellow-green
+            { t: 0.583, r: 1.00, g: 1.00, b: 0.00 },  // Yellow
+            { t: 0.667, r: 1.00, g: 0.75, b: 0.00 },  // Orange-yellow
+            { t: 0.750, r: 1.00, g: 0.50, b: 0.00 },  // Orange
+            { t: 0.833, r: 1.00, g: 0.25, b: 0.00 },  // Red-orange
+            { t: 0.917, r: 1.00, g: 0.00, b: 0.00 },  // Red
+            { t: 1.000, r: 0.50, g: 0.00, b: 0.00 },  // Dark red
+        ];
+        
+        // Find the two color stops to interpolate between
+        let i = 0;
+        while (i < colorStops.length - 1 && colorStops[i + 1].t < t) {
+            i++;
+        }
+        
+        if (i >= colorStops.length - 1) {
+            const last = colorStops[colorStops.length - 1];
+            color.setRGB(srgbToLinear(last.r), srgbToLinear(last.g), srgbToLinear(last.b));
+        } else {
+            const c0 = colorStops[i];
+            const c1 = colorStops[i + 1];
+            const s = (t - c0.t) / (c1.t - c0.t);
+            
+            const r = c0.r + s * (c1.r - c0.r);
+            const g = c0.g + s * (c1.g - c0.g);
+            const b = c0.b + s * (c1.b - c0.b);
+            
+            color.setRGB(srgbToLinear(r), srgbToLinear(g), srgbToLinear(b));
+        }
+        
+        return color;
+    }
+    
+    // Helper to ensure a geometry has a color attribute
+    function ensureColorAttribute(geometry) {
+        if (!geometry.attributes.color) {
+            const posAttr = geometry.attributes.position;
+            const colors = new Float32Array(posAttr.count * 3);
+            geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+        }
+        return geometry.attributes.color;
+    }
+    
+    // Step 3: Apply vertex colors to mesh elements
+    let coloredElements = 0;
+    plateElementIndex = 0;
+    
+    sceneData.platesGroup.children.forEach((plate, plateIdx) => {
+        const meshViz = plate.children.find(c => c.userData && c.userData.isMeshViz);
+        
+        if (meshViz) {
+            // Meshed plate - apply vertex colors to each element
+            meshViz.children.forEach((element) => {
+                if (element.userData && element.userData.isMeshElement && element.isMesh) {
+                    let plateName = plateNameMap.get(element.uuid);
+                    if (!plateName) {
+                        plateElementIndex++;
+                        plateName = `P${plateElementIndex}`;
+                    }
+                    
+                    const nodeNames = element.userData.nodeNames || [];
+                    if (nodeNames.length !== 4) {
+                        console.warn(`Element missing nodeNames, has ${nodeNames.length}`);
+                        return;
+                    }
+                    
+                    // Store original material for restoration
+                    if (!element.userData.originalMaterial) {
+                        element.userData.originalMaterial = element.material.clone();
+                    }
+                    
+                    // Get averaged stress at each node
+                    const nodeColors = nodeNames.map(nodeName => {
+                        const stress = nodeStressMap.get(nodeName) || 0;
+                        return getStressColor(stress);
+                    });
+                    
+                    // Clone geometry so we don't affect other instances
+                    if (!element.userData.coloredGeometry) {
+                        element.userData.originalGeometry = element.geometry;
+                        element.geometry = element.geometry.clone();
+                        element.userData.coloredGeometry = element.geometry;
+                    }
+                    
+                    const geometry = element.geometry;
+                    const colorAttr = ensureColorAttribute(geometry);
+                    
+                    // PlaneGeometry has vertices in order: 0,1,2,3 = corners
+                    // But indices create triangles, so we need to map positions to nodes
+                    // Standard PlaneGeometry vertex order: 
+                    //   2 --- 3    (top-left, top-right)
+                    //   |     |
+                    //   0 --- 1    (bottom-left, bottom-right)
+                    // Our nodeNames are [i, j, m, n] = corner order depends on creation
+                    
+                    // For quad elements: nodeNames typically [i, j, m, n] 
+                    // where corners are at positions 0, 1, 2, 3
+                    const posAttr = geometry.attributes.position;
+                    const numVerts = posAttr.count;
+                    
+                    // Build vertex-to-node mapping based on position
+                    // Get element corners
+                    const positions = [];
+                    for (let i = 0; i < numVerts; i++) {
+                        positions.push(new THREE.Vector3(
+                            posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i)
+                        ));
+                    }
+                    
+                    // Apply colors to each vertex based on node stress
+                    if (numVerts === 4) {
+                        // Standard 4-vertex quad
+                        // nodeNames[0]=i, [1]=j, [2]=m, [3]=n -> corners
+                        // Assuming vertex order matches node order
+                        for (let v = 0; v < 4; v++) {
+                            const color = nodeColors[v] || nodeColors[0];
+                            colorAttr.setXYZ(v, color.r, color.g, color.b);
+                        }
+                    } else {
+                        // More vertices (subdivided?) - use average color
+                        const avgColor = new THREE.Color();
+                        nodeColors.forEach(c => avgColor.add(c));
+                        avgColor.multiplyScalar(1 / nodeColors.length);
+                        for (let v = 0; v < numVerts; v++) {
+                            colorAttr.setXYZ(v, avgColor.r, avgColor.g, avgColor.b);
+                        }
+                    }
+                    
+                    colorAttr.needsUpdate = true;
+                    
+                    // Enable vertex colors on material
+                    element.material = new THREE.MeshBasicMaterial({
+                        vertexColors: true,
+                        transparent: true,
+                        opacity: 0.92,
+                        side: THREE.DoubleSide,
+                        depthWrite: false,
+                        depthTest: true
+                    });
+                    
+                    element.userData.hasStressOverlay = true;
+                    
+                    if (!window.feaDiagramObjects) window.feaDiagramObjects = [];
+                    window.feaDiagramObjects.push({ mesh: element, type: 'stress_color' });
+                    coloredElements++;
+                }
+            });
+        } else {
+            // Unmeshed plate - apply uniform color based on averaged corner stresses
+            plateElementIndex++;
+            let plateName = plateNameMap.get(plate.uuid) || `P${plateElementIndex}`;
+            const stressData = plateStressMap.get(plateName);
+            
+            if (stressData) {
+                const value = (stressData[stressType] ?? stressData.von_mises ?? 0);
+                const color = getStressColor(value);
+                
+                plate.children.forEach(child => {
+                    if (child.isMesh) {
+                        if (!child.userData.originalMaterial) {
+                            child.userData.originalMaterial = child.material.clone();
+                        }
+                        child.material.color.copy(color);
+                        child.material.transparent = true;
+                        child.material.opacity = 0.92;
+                        child.material.side = THREE.DoubleSide;
+                        child.material.needsUpdate = true;
+                        child.userData.hasStressOverlay = true;
+                        
+                        if (!window.feaDiagramObjects) window.feaDiagramObjects = [];
+                        window.feaDiagramObjects.push({ mesh: child, type: 'stress_color' });
+                        coloredElements++;
+                    }
+                });
+            }
+        }
+    });
+    
+    console.log(`Colored ${coloredElements} plate elements with smooth interpolation`);
+    
+    // Add color legend
+    addStressLegend(stressType, minStress, maxStress);
+    
+    console.log(`Showing ${stressType} stress for ${plateStresses.length} plates`);
+};
+
+/**
+ * Add a color legend for stress visualization
+ */
+function addStressLegend(stressType, minVal, maxVal) {
+    // Remove existing legend
+    const existingLegend = document.getElementById('stress-legend');
+    if (existingLegend) {
+        existingLegend.remove();
+    }
+    
+    // Create HTML-based legend (more reliable than 3D sprite)
+    const legendDiv = document.createElement('div');
+    legendDiv.id = 'stress-legend';
+    legendDiv.style.cssText = `
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        background: rgba(255, 255, 255, 0.95);
+        border: 2px solid #333;
+        border-radius: 8px;
+        padding: 10px 15px;
+        z-index: 1000;
+        font-family: Arial, sans-serif;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+    `;
+    
+    // Title
+    const titleMap = {
+        'von_mises': 'Von Mises Stress',
+        'sx': 'Membrane Stress σx',
+        'sy': 'Membrane Stress σy',
+        'txy': 'Shear Stress τxy',
+        'mx': 'Bending Moment Mx',
+        'my': 'Bending Moment My',
+        'mxy': 'Twisting Moment Mxy'
+    };
+    
+    const title = document.createElement('div');
+    title.style.cssText = 'font-weight: bold; font-size: 14px; margin-bottom: 8px; text-align: center; color: #333;';
+    title.textContent = titleMap[stressType] || stressType;
+    legendDiv.appendChild(title);
+    
+    // Color bar (Jet colormap: blue -> cyan -> green -> yellow -> red)
+    const colorBar = document.createElement('div');
+    colorBar.style.cssText = `
+        width: 150px;
+        height: 20px;
+        background: linear-gradient(to right, 
+            rgb(0, 0, 255),
+            rgb(0, 255, 255),
+            rgb(0, 255, 0),
+            rgb(255, 255, 0),
+            rgb(255, 0, 0));
+        border: 1px solid #333;
+        border-radius: 2px;
+    `;
+    legendDiv.appendChild(colorBar);
+    
+    // Min/Max labels
+    const labelsDiv = document.createElement('div');
+    labelsDiv.style.cssText = 'display: flex; justify-content: space-between; margin-top: 5px; font-size: 11px; color: #333;';
+    
+    const minLabel = document.createElement('span');
+    minLabel.textContent = formatStressValue(minVal);
+    labelsDiv.appendChild(minLabel);
+    
+    const maxLabel = document.createElement('span');
+    maxLabel.textContent = formatStressValue(maxVal);
+    labelsDiv.appendChild(maxLabel);
+    
+    legendDiv.appendChild(labelsDiv);
+    
+    document.body.appendChild(legendDiv);
+}
+
+/**
+ * Format stress value for display - always in MPa
+ */
+function formatStressValue(value) {
+    // Always display in MPa (1 MPa = 1e6 Pa)
+    return (value / 1e6).toFixed(3) + ' MPa';
+}
+
+/**
+ * Clear plate stress colors and restore original materials
+ */
+window.clearPlateStressColors = function() {
+    if (window.feaDiagramObjects) {
+        window.feaDiagramObjects.forEach(item => {
+            if (item.mesh && item.type === 'stress_color' && item.mesh.userData.originalMaterial) {
+                item.mesh.material = item.mesh.userData.originalMaterial;
+                delete item.mesh.userData.originalMaterial;
+            }
+        });
+    }
+};
+
 console.log('FEA Solver integration loaded');
+console.log('Plate stress visualization available: window.showPlateVonMisesStress(), window.showPlateStress(type)');

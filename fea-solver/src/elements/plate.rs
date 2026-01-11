@@ -1,5 +1,7 @@
-//! Plate element - rectangular plate/shell element (DKMQ formulation)
+//! Plate element - rectangular plate/shell element
+//! Supports Kirchhoff, Mindlin, and DKMQ formulations
 
+use crate::math::plate::PlateFormulation;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -23,6 +25,8 @@ pub struct Plate {
     pub kx_mod: f64,
     /// Local y stiffness modifier
     pub ky_mod: f64,
+    /// Plate bending formulation (Kirchhoff, Mindlin, or DKMQ)
+    pub formulation: PlateFormulation,
     
     /// Calculated width (j to i distance)
     #[serde(skip)]
@@ -67,7 +71,7 @@ pub struct PlateStresses {
 }
 
 impl Plate {
-    /// Create a new plate element
+    /// Create a new plate element with default Kirchhoff formulation
     pub fn new(
         i_node: &str,
         j_node: &str,
@@ -85,6 +89,7 @@ impl Plate {
             material: material.to_string(),
             kx_mod: 1.0,
             ky_mod: 1.0,
+            formulation: PlateFormulation::Kirchhoff,
             width: None,
             height: None,
             forces: HashMap::new(),
@@ -97,6 +102,12 @@ impl Plate {
     pub fn with_modifiers(mut self, kx_mod: f64, ky_mod: f64) -> Self {
         self.kx_mod = kx_mod;
         self.ky_mod = ky_mod;
+        self
+    }
+
+    /// Set plate bending formulation
+    pub fn with_formulation(mut self, formulation: PlateFormulation) -> Self {
+        self.formulation = formulation;
         self
     }
 
@@ -129,6 +140,6 @@ impl Plate {
 
 impl Default for Plate {
     fn default() -> Self {
-        Self::new("", "", "", "", 0.1, "")
+        Self::new("", "", "", "", 0.1, "").with_formulation(PlateFormulation::Kirchhoff)
     }
 }

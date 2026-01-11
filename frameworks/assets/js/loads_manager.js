@@ -788,13 +788,23 @@ export function getAllLoads() {
 let loadsVisible = true;
 
 /**
- * Toggle visibility of all load visuals
+ * Toggle visibility of all load visuals (beam loads and node loads)
  */
 export function toggleLoadsVisibility() {
     loadsVisible = !loadsVisible;
+    
+    // Toggle beam/plate load visuals
     loadVisuals.forEach((visual) => {
         visual.visible = loadsVisible;
     });
+    
+    // Toggle node load visuals (point loads on nodes/mesh elements)
+    if (window.nodeLoadVisuals) {
+        window.nodeLoadVisuals.forEach((visual) => {
+            visual.visible = loadsVisible;
+        });
+    }
+    
     console.log(`Loads visibility: ${loadsVisible ? 'shown' : 'hidden'}`);
     return loadsVisible;
 }
