@@ -267,16 +267,16 @@ function createMeshVisualization(plate, type, size, DelaunatorClass, nodesGroup)
                 
                 // Create quad geometry
                 const quadGeom = new THREE.BufferGeometry();
+                // Use indexed geometry so EdgesGeometry does NOT draw the internal diagonal.
+                // Vertex order: A (bl), B (br), C (tr), D (tl)
                 const quadVertices = [
                     nA.position.x, nA.position.y, nA.position.z,
-                    nB.position.x, nB.position.y, nB.position.z,
-                    nD.position.x, nD.position.y, nD.position.z,
-                    
                     nB.position.x, nB.position.y, nB.position.z,
                     nC.position.x, nC.position.y, nC.position.z,
                     nD.position.x, nD.position.y, nD.position.z
                 ];
                 quadGeom.setAttribute('position', new THREE.Float32BufferAttribute(quadVertices, 3));
+                quadGeom.setIndex([0, 1, 3, 1, 2, 3]);
                 quadGeom.computeVertexNormals();
                 
                 // Create quad mesh (element)

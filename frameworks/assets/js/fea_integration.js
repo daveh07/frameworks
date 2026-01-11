@@ -90,6 +90,66 @@ console.log('FEA Server URL:', FEA_SERVER_URL);
 console.log('NOTE: If running in Codespaces, ensure port 8086 is set to PUBLIC visibility');
 
 // ========================
+// Console Progress Tracker
+// ========================
+
+class ConsoleProgressTracker {
+    constructor(taskName) {
+        this.taskName = taskName;
+        this.startTime = performance.now();
+        this.intervalId = null;
+        this.frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+        this.frameIndex = 0;
+        this.lastLoggedTime = 0;
+    }
+
+    start() {
+        this.startTime = performance.now();
+        console.log(`%c🔄 ${this.taskName} started...`, 'color: #4CAF50; font-weight: bold');
+        
+        // Update progress every 500ms
+        this.intervalId = setInterval(() => {
+            const elapsed = ((performance.now() - this.startTime) / 1000).toFixed(1);
+            const frame = this.frames[this.frameIndex];
+            this.frameIndex = (this.frameIndex + 1) % this.frames.length;
+            
+            // Clear previous line and print new status
+            console.log(`%c${frame} ${this.taskName}... ${elapsed}s elapsed`, 'color: #2196F3');
+        }, 500);
+    }
+
+    update(message) {
+        const elapsed = ((performance.now() - this.startTime) / 1000).toFixed(1);
+        console.log(`%c  ├─ ${message} (${elapsed}s)`, 'color: #9E9E9E');
+    }
+
+    complete(resultMessage) {
+        if (this.intervalId) {
+            clearInterval(this.intervalId);
+            this.intervalId = null;
+        }
+        const totalTime = ((performance.now() - this.startTime) / 1000).toFixed(2);
+        console.log(`%c✅ ${this.taskName} completed in ${totalTime}s`, 'color: #4CAF50; font-weight: bold');
+        if (resultMessage) {
+            console.log(`%c  └─ ${resultMessage}`, 'color: #8BC34A');
+        }
+    }
+
+    error(errorMessage) {
+        if (this.intervalId) {
+            clearInterval(this.intervalId);
+            this.intervalId = null;
+        }
+        const totalTime = ((performance.now() - this.startTime) / 1000).toFixed(2);
+        console.log(`%c❌ ${this.taskName} failed after ${totalTime}s`, 'color: #F44336; font-weight: bold');
+        console.log(`%c  └─ ${errorMessage}`, 'color: #EF5350');
+    }
+}
+
+// Global progress tracker instance
+let feaProgressTracker = null;
+
+// ========================
 // Structure Data Extraction
 // ========================
 
@@ -487,39 +547,33 @@ window.extractFEAStructure = function(materialConfig, beamSectionConfig) {
     }
 
     // Extract plate loads from elementLoads Map (mesh element pressure loads)
+    let elementLoadCount = 0;
     if (window.elementLoads && window.elementLoads.size > 0) {
-        console.log('=== Extracting Plate Loads ===');
         window.elementLoads.forEach((loads, elementUuid) => {
             const plateName = plateNameMap.get(elementUuid);
-            if (!plateName) {
-                console.warn('Element UUID not found in plateNameMap:', elementUuid);
-                return;
-            }
+            if (!plateName) return;
             
             loads.forEach(load => {
                 if (load.type === 'pressure_element') {
-                    // Convert from kPa (UI units) to Pa (solver units) - kPa = kN/m^2
-                    // 1 kPa = 1000 Pa = 1000 N/m^2
                     const pressure_Pa = load.magnitude * 1000;
                     model.plate_loads.push({
                         plate: plateName,
                         pressure: pressure_Pa,
                         case: 'Case 1'
                     });
-                    console.log(`Pressure load on ${plateName}: ${load.magnitude} kPa = ${pressure_Pa} Pa`);
+                    elementLoadCount++;
                 }
             });
         });
+        if (elementLoadCount > 0) {
+            console.log(`Extracted ${elementLoadCount} element pressure loads`);
+        }
     }
 
     // Also check plateLoads (loads applied to entire plates or directly to mesh elements)
+    let plateLoadCount = 0;
     if (window.plateLoads && window.plateLoads.size > 0) {
-        console.log('=== Extracting Plate-level Loads ===');
-        console.log('plateLoads size:', window.plateLoads.size);
-        
         window.plateLoads.forEach((loads, plateUuid) => {
-            console.log('Processing plateLoad for UUID:', plateUuid);
-            
             // First check if this UUID is a mesh element (directly in plateNameMap)
             const directPlateName = plateNameMap.get(plateUuid);
             if (directPlateName) {
@@ -532,7 +586,7 @@ window.extractFEAStructure = function(materialConfig, beamSectionConfig) {
                             pressure: pressure_Pa,
                             case: 'Case 1'
                         });
-                        console.log(`Pressure load on mesh element ${directPlateName}: ${load.magnitude} kPa = ${pressure_Pa} Pa`);
+                        plateLoadCount++;
                     }
                 });
                 return;
@@ -541,10 +595,7 @@ window.extractFEAStructure = function(materialConfig, beamSectionConfig) {
             // Otherwise, check if it's a parent plate UUID
             if (!sceneData.platesGroup) return;
             const plate = sceneData.platesGroup.children.find(p => p.uuid === plateUuid);
-            if (!plate) {
-                console.warn('UUID not found in plateNameMap or platesGroup:', plateUuid);
-                return;
-            }
+            if (!plate) return;
             
             const meshViz = plate.children.find(c => c.userData.isMeshViz);
             if (meshViz) {
@@ -560,7 +611,7 @@ window.extractFEAStructure = function(materialConfig, beamSectionConfig) {
                                     pressure: pressure_Pa,
                                     case: 'Case 1'
                                 });
-                                console.log(`Pressure load distributed to ${plateName}: ${load.magnitude} kPa`);
+                                plateLoadCount++;
                             }
                         });
                     }
@@ -577,13 +628,15 @@ window.extractFEAStructure = function(materialConfig, beamSectionConfig) {
                                 pressure: pressure_Pa,
                                 case: 'Case 1'
                             });
-                            console.log(`Pressure load on unmeshed plate ${plateName}: ${load.magnitude} kPa`);
+                            plateLoadCount++;
                         }
                     });
                 }
             }
         });
-        console.log('Total plate loads extracted:', model.plate_loads.length);
+        if (plateLoadCount > 0) {
+            console.log(`Extracted ${plateLoadCount} plate-level pressure loads`);
+        }
     }
 
     // Add default load combination if not specified
@@ -594,18 +647,12 @@ window.extractFEAStructure = function(materialConfig, beamSectionConfig) {
         });
     }
 
-    console.log('=== Final FEA Model ===');
-    console.log('Nodes:', model.nodes.length);
-    console.log('Members:', model.members.length);
-    console.log('Plates:', model.plates.length);
-    console.log('Supports:', model.supports.length);
-    console.log('Point loads:', model.node_loads.length);
-    console.log('Distributed loads:', model.distributed_loads.length);
-    console.log('Plate loads:', model.plate_loads.length);
+    // Condensed model summary (single line)
+    console.log(`%c📊 FEA Model: ${model.nodes.length} nodes, ${model.members.length} members, ${model.plates.length} plates, ${model.supports.length} supports, ${model.plate_loads.length} loads`, 
+        'color: #2196F3; font-weight: bold');
 
     // Export plate name map for stress visualization
     window.feaPlateNameMap = plateNameMap;
-    console.log('Plate name map exported:', plateNameMap.size, 'entries');
 
     return model;
 };
@@ -678,21 +725,28 @@ function calculateSectionProperties(section) {
 // ========================
 
 window.runFEAAnalysis = async function(materialConfig, beamSectionConfig, analysisType = 'linear') {
+    // Start progress tracking
+    feaProgressTracker = new ConsoleProgressTracker('FEA Analysis');
+    feaProgressTracker.start();
+    
     if (window.addSolverLog) {
         window.addSolverLog('Starting FEA analysis...', 'info');
     }
 
+    feaProgressTracker.update('Extracting structure data...');
     const model = window.extractFEAStructure(materialConfig, beamSectionConfig);
     
     if (!model) {
         const error = 'Failed to extract structure data from scene';
         if (window.addSolverLog) window.addSolverLog(error, 'error');
+        feaProgressTracker.error(error);
         return { error };
     }
 
     if (model.nodes.length === 0) {
         const error = 'No nodes found in the model';
         if (window.addSolverLog) window.addSolverLog(error, 'error');
+        feaProgressTracker.error(error);
         return { error };
     }
 
@@ -700,17 +754,22 @@ window.runFEAAnalysis = async function(materialConfig, beamSectionConfig, analys
     if (model.members.length === 0 && model.plates.length === 0) {
         const error = 'No members or plates found in the model';
         if (window.addSolverLog) window.addSolverLog(error, 'error');
+        feaProgressTracker.error(error);
         return { error };
     }
 
     if (model.supports.length === 0) {
         const error = 'No supports found - model is unstable';
         if (window.addSolverLog) window.addSolverLog(error, 'error');
+        feaProgressTracker.error(error);
         return { error };
     }
 
+    const modelSummary = `${model.nodes.length} nodes, ${model.members.length} members, ${model.plates.length} plates`;
+    feaProgressTracker.update(`Model: ${modelSummary}`);
+    
     if (window.addSolverLog) {
-        window.addSolverLog(`Model: ${model.nodes.length} nodes, ${model.members.length} members, ${model.plates.length} plates, ${model.supports.length} supports`, 'info');
+        window.addSolverLog(`Model: ${modelSummary}, ${model.supports.length} supports`, 'info');
         window.addSolverLog('Sending to FEA solver...', 'info');
     }
 
@@ -723,6 +782,8 @@ window.runFEAAnalysis = async function(materialConfig, beamSectionConfig, analys
             }
         };
 
+        feaProgressTracker.update('Sending request to solver backend (not WASM - server-side Rust)...');
+        
         const response = await fetch(`${FEA_SERVER_URL}/api/v1/analyze`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -742,9 +803,11 @@ window.runFEAAnalysis = async function(materialConfig, beamSectionConfig, analys
             }
             if (window.addSolverLog) window.addSolverLog(errorMsg, 'error');
             console.error('FEA Server Error:', errorMsg);
+            feaProgressTracker.error(errorMsg);
             return { error: errorMsg };
         }
 
+        feaProgressTracker.update('Processing solver response...');
         const data = await response.json();
 
         if (data.success && data.results) {
@@ -793,6 +856,9 @@ window.runFEAAnalysis = async function(materialConfig, beamSectionConfig, analys
                 window.addSolverLog(`Max displacement: ${(calculatedMaxDefl * 1000).toFixed(2)} mm`, 'info');
             }
             
+            // Complete progress tracking
+            feaProgressTracker.complete(`Max displacement: ${(calculatedMaxDefl * 1000).toFixed(2)} mm`);
+            
             // Store results globally
             window.feaResults = data.results;
             window.feaModel = model;
@@ -804,10 +870,12 @@ window.runFEAAnalysis = async function(materialConfig, beamSectionConfig, analys
         } else {
             const error = data.error || 'Analysis failed';
             if (window.addSolverLog) window.addSolverLog(error, 'error');
+            feaProgressTracker.error(error);
             return { error };
         }
     } catch (error) {
         if (window.addSolverLog) window.addSolverLog(`Error: ${error.toString()}`, 'error');
+        feaProgressTracker.error(error.toString());
         return { error: error.toString() };
     }
 };
@@ -2611,33 +2679,22 @@ window.showPlateStress = function(stressType = 'von_mises') {
     
     console.log(`Plate ${stressType} stress range: ${minStress.toExponential(2)} to ${maxStress.toExponential(2)}`);
     
-    // Color function using CalculiX-style jet colormap (dark blue -> blue -> cyan -> green -> yellow -> orange -> red -> dark red)
-    // IMPORTANT: THREE.Color.setRGB expects LINEAR values. The stops below are specified in sRGB.
-    // Convert sRGB -> linear to avoid the "neon/too bright" look.
+    // Color function using soft rainbow/jet colormap matching commercial FEA style
+    // Blue -> Cyan -> Green -> Yellow -> Orange -> Red with soft pastel tones
     function getStressColor(value) {
         const t = Math.max(0, Math.min(1, (value - minStress) / stressRange));
         const color = new THREE.Color();
 
-        function srgbToLinear(c) {
-            return (c <= 0.04045) ? (c / 12.92) : Math.pow((c + 0.055) / 1.055, 2.4);
-        }
-        
-        // CalculiX-style 13-band jet colormap (darker, more saturated)
-        // These are the classic FEA colors - from dark blue to dark red
+        // Soft but visible FEA-style colormap (balanced saturation)
+        // Format: { t: position 0-1, r/g/b: 0-255 sRGB values }
         const colorStops = [
-            { t: 0.000, r: 0.00, g: 0.00, b: 0.50 },  // Dark blue
-            { t: 0.083, r: 0.00, g: 0.00, b: 1.00 },  // Blue
-            { t: 0.167, r: 0.00, g: 0.50, b: 1.00 },  // Light blue
-            { t: 0.250, r: 0.00, g: 1.00, b: 1.00 },  // Cyan
-            { t: 0.333, r: 0.00, g: 1.00, b: 0.50 },  // Cyan-green
-            { t: 0.417, r: 0.00, g: 1.00, b: 0.00 },  // Green
-            { t: 0.500, r: 0.50, g: 1.00, b: 0.00 },  // Yellow-green
-            { t: 0.583, r: 1.00, g: 1.00, b: 0.00 },  // Yellow
-            { t: 0.667, r: 1.00, g: 0.75, b: 0.00 },  // Orange-yellow
-            { t: 0.750, r: 1.00, g: 0.50, b: 0.00 },  // Orange
-            { t: 0.833, r: 1.00, g: 0.25, b: 0.00 },  // Red-orange
-            { t: 0.917, r: 1.00, g: 0.00, b: 0.00 },  // Red
-            { t: 1.000, r: 0.50, g: 0.00, b: 0.00 },  // Dark red
+            { t: 0.00, r: 50,  g: 60,  b: 200 },  // Blue
+            { t: 0.20, r: 60,  g: 160, b: 220 },  // Light blue/cyan
+            { t: 0.35, r: 70,  g: 200, b: 160 },  // Cyan-green
+            { t: 0.50, r: 110, g: 200, b: 70  },  // Green
+            { t: 0.65, r: 190, g: 210, b: 50  },  // Yellow-green
+            { t: 0.80, r: 235, g: 160, b: 45  },  // Orange
+            { t: 1.00, r: 220, g: 60,  b: 50  },  // Red
         ];
         
         // Find the two color stops to interpolate between
@@ -2646,21 +2703,22 @@ window.showPlateStress = function(stressType = 'von_mises') {
             i++;
         }
         
+        let r, g, b;
         if (i >= colorStops.length - 1) {
             const last = colorStops[colorStops.length - 1];
-            color.setRGB(srgbToLinear(last.r), srgbToLinear(last.g), srgbToLinear(last.b));
+            r = last.r; g = last.g; b = last.b;
         } else {
             const c0 = colorStops[i];
             const c1 = colorStops[i + 1];
             const s = (t - c0.t) / (c1.t - c0.t);
             
-            const r = c0.r + s * (c1.r - c0.r);
-            const g = c0.g + s * (c1.g - c0.g);
-            const b = c0.b + s * (c1.b - c0.b);
-            
-            color.setRGB(srgbToLinear(r), srgbToLinear(g), srgbToLinear(b));
+            r = c0.r + s * (c1.r - c0.r);
+            g = c0.g + s * (c1.g - c0.g);
+            b = c0.b + s * (c1.b - c0.b);
         }
         
+        // Convert to 0-1 range and set directly (no need for sRGB conversion with these soft values)
+        color.setRGB(r / 255, g / 255, b / 255);
         return color;
     }
     
@@ -2674,7 +2732,104 @@ window.showPlateStress = function(stressType = 'von_mises') {
         return geometry.attributes.color;
     }
     
-    // Step 3: Apply vertex colors to mesh elements
+    // Create a subdivided quad geometry with bilinear color interpolation
+    // This gives smooth CalculiX-style gradients within each element
+    function createSubdividedColoredQuad(element, cornerStresses, subdivisions = 8) {
+        const geometry = element.geometry;
+        const posAttr = geometry.attributes.position;
+        
+        // Get the 4 corner positions from original geometry (element local space)
+        const corners = [];
+        const tempVec = new THREE.Vector3();
+        for (let i = 0; i < Math.min(4, posAttr.count); i++) {
+            tempVec.set(posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i));
+            corners.push(new THREE.Vector3(
+                posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i)
+            ));
+        }
+        
+        // Create subdivided geometry
+        const n = subdivisions + 1; // number of vertices per edge
+        const positions = [];
+        const colors = [];
+        const indices = [];
+        
+        // IMPORTANT: Map cornerStresses to actual geometry corners based on vertex positions
+        // PlaneGeometry vertex order: 0, 1, 2, 3
+        // We need to figure out which corner is which based on position
+        // Find bounding box
+        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        corners.forEach(c => {
+            // Use x and y for horizontal plates, or x and z for other orientations
+            const px = c.x, py = c.y !== 0 ? c.y : c.z;
+            if (px < minX) minX = px;
+            if (px > maxX) maxX = px;
+            if (py < minY) minY = py;
+            if (py > maxY) maxY = py;
+        });
+        
+        // Map each geometry corner to stress value
+        // cornerStresses[0]=i, [1]=j, [2]=m, [3]=n in CCW order from creation
+        // For a horizontal plate: i=corner0, j=corner1, m=corner2, n=corner3 geometrically
+        // The stress values correspond to the nodeNames order, which matches element.userData.nodes order
+        const s0 = cornerStresses[0]; // stress at geometry corner 0
+        const s1 = cornerStresses[1]; // stress at geometry corner 1
+        const s2 = cornerStresses[2]; // stress at geometry corner 2 (was swapped with s3)
+        const s3 = cornerStresses[3]; // stress at geometry corner 3
+        
+        // Generate vertices with bilinear interpolation
+        // IMPORTANT: our quad element vertex order is A=bl, B=br, C=tr, D=tl.
+        // Bilinear mapping expects: c00=bl, c10=br, c01=tl, c11=tr.
+        for (let j = 0; j <= subdivisions; j++) {
+            const v = j / subdivisions; // 0 to 1
+            for (let i = 0; i <= subdivisions; i++) {
+                const u = i / subdivisions; // 0 to 1
+                
+                // Bilinear interpolation of position
+                // corners[0]=bl, corners[1]=br, corners[2]=tr, corners[3]=tl
+                const pos = new THREE.Vector3();
+                pos.x = (1-u)*(1-v)*corners[0].x + u*(1-v)*corners[1].x + (1-u)*v*corners[3].x + u*v*corners[2].x;
+                pos.y = (1-u)*(1-v)*corners[0].y + u*(1-v)*corners[1].y + (1-u)*v*corners[3].y + u*v*corners[2].y;
+                pos.z = (1-u)*(1-v)*corners[0].z + u*(1-v)*corners[1].z + (1-u)*v*corners[3].z + u*v*corners[2].z;
+                
+                positions.push(pos.x, pos.y, pos.z);
+                
+                // Bilinear interpolation of stress value matching PlaneGeometry corner order
+                // c00=s0 (bl), c10=s1 (br), c01=s3 (tl), c11=s2 (tr)
+                const stress = (1-u)*(1-v)*s0 + u*(1-v)*s1 + (1-u)*v*s3 + u*v*s2;
+                const color = getStressColor(stress);
+                colors.push(color.r, color.g, color.b);
+            }
+        }
+        
+        // Generate triangle indices - consistent CCW winding for both triangles
+        for (let j = 0; j < subdivisions; j++) {
+            for (let i = 0; i < subdivisions; i++) {
+                const a = j * n + i;           // bottom-left
+                const b = j * n + i + 1;       // bottom-right
+                const c = (j + 1) * n + i;     // top-left
+                const d = (j + 1) * n + i + 1; // top-right
+                
+                // Two triangles per quad cell - CCW winding
+                // Triangle 1: a -> b -> d (bottom-left, bottom-right, top-right)
+                // Triangle 2: a -> d -> c (bottom-left, top-right, top-left)
+                indices.push(a, b, d);
+                indices.push(a, d, c);
+            }
+        }
+        
+        // Create new BufferGeometry
+        const newGeometry = new THREE.BufferGeometry();
+        newGeometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        newGeometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+        newGeometry.setIndex(indices);
+        newGeometry.computeVertexNormals();
+        
+        // Important: mark as double-sided to avoid winding issues
+        return newGeometry;
+    }
+    
+    // Step 3: Apply vertex colors to mesh elements with smooth gradients
     let coloredElements = 0;
     plateElementIndex = 0;
     
@@ -2682,7 +2837,7 @@ window.showPlateStress = function(stressType = 'von_mises') {
         const meshViz = plate.children.find(c => c.userData && c.userData.isMeshViz);
         
         if (meshViz) {
-            // Meshed plate - apply vertex colors to each element
+            // Meshed plate - apply smooth gradient colors to each element
             meshViz.children.forEach((element) => {
                 if (element.userData && element.userData.isMeshElement && element.isMesh) {
                     let plateName = plateNameMap.get(element.uuid);
@@ -2697,77 +2852,47 @@ window.showPlateStress = function(stressType = 'von_mises') {
                         return;
                     }
                     
-                    // Store original material for restoration
+                    // Store original material and geometry for restoration
                     if (!element.userData.originalMaterial) {
                         element.userData.originalMaterial = element.material.clone();
                     }
+                    if (!element.userData.originalGeometry) {
+                        element.userData.originalGeometry = element.geometry;
+                    }
                     
-                    // Get averaged stress at each node
-                    const nodeColors = nodeNames.map(nodeName => {
-                        const stress = nodeStressMap.get(nodeName) || 0;
-                        return getStressColor(stress);
+                    // Get stress values at each corner node
+                    const cornerStresses = nodeNames.map(nodeName => {
+                        return nodeStressMap.get(nodeName) || 0;
                     });
                     
-                    // Clone geometry so we don't affect other instances
-                    if (!element.userData.coloredGeometry) {
-                        element.userData.originalGeometry = element.geometry;
-                        element.geometry = element.geometry.clone();
-                        element.userData.coloredGeometry = element.geometry;
-                    }
-                    
-                    const geometry = element.geometry;
-                    const colorAttr = ensureColorAttribute(geometry);
-                    
-                    // PlaneGeometry has vertices in order: 0,1,2,3 = corners
-                    // But indices create triangles, so we need to map positions to nodes
-                    // Standard PlaneGeometry vertex order: 
-                    //   2 --- 3    (top-left, top-right)
-                    //   |     |
-                    //   0 --- 1    (bottom-left, bottom-right)
-                    // Our nodeNames are [i, j, m, n] = corner order depends on creation
-                    
-                    // For quad elements: nodeNames typically [i, j, m, n] 
-                    // where corners are at positions 0, 1, 2, 3
-                    const posAttr = geometry.attributes.position;
-                    const numVerts = posAttr.count;
-                    
-                    // Build vertex-to-node mapping based on position
-                    // Get element corners
-                    const positions = [];
-                    for (let i = 0; i < numVerts; i++) {
-                        positions.push(new THREE.Vector3(
-                            posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i)
-                        ));
-                    }
-                    
-                    // Apply colors to each vertex based on node stress
-                    if (numVerts === 4) {
-                        // Standard 4-vertex quad
-                        // nodeNames[0]=i, [1]=j, [2]=m, [3]=n -> corners
-                        // Assuming vertex order matches node order
-                        for (let v = 0; v < 4; v++) {
-                            const color = nodeColors[v] || nodeColors[0];
-                            colorAttr.setXYZ(v, color.r, color.g, color.b);
+                    // Create subdivided geometry with smooth color interpolation
+                    const subdividedGeometry = createSubdividedColoredQuad(element, cornerStresses, 6);
+                    element.geometry = subdividedGeometry;
+
+                    // Show mesh outline during contour (subtle, on top)
+                    element.children.forEach(child => {
+                        if (child && child.isLineSegments) {
+                            if (child.userData.prevVisible === undefined) {
+                                child.userData.prevVisible = child.visible;
+                            }
+                            child.visible = true;
+                            if (child.material) {
+                                child.material.transparent = true;
+                                child.material.opacity = 0.25;
+                                child.material.depthTest = false;
+                                child.material.needsUpdate = true;
+                            }
+                            child.renderOrder = 1000;
                         }
-                    } else {
-                        // More vertices (subdivided?) - use average color
-                        const avgColor = new THREE.Color();
-                        nodeColors.forEach(c => avgColor.add(c));
-                        avgColor.multiplyScalar(1 / nodeColors.length);
-                        for (let v = 0; v < numVerts; v++) {
-                            colorAttr.setXYZ(v, avgColor.r, avgColor.g, avgColor.b);
-                        }
-                    }
+                    });
                     
-                    colorAttr.needsUpdate = true;
-                    
-                    // Enable vertex colors on material
+                    // Enable vertex colors on material - DOUBLE SIDED to fix half-missing triangles
                     element.material = new THREE.MeshBasicMaterial({
                         vertexColors: true,
-                        transparent: true,
-                        opacity: 0.92,
+                        transparent: false,
+                        opacity: 1.0,
                         side: THREE.DoubleSide,
-                        depthWrite: false,
+                        depthWrite: true,
                         depthTest: true
                     });
                     
@@ -2831,16 +2956,17 @@ function addStressLegend(stressType, minVal, maxVal) {
     const legendDiv = document.createElement('div');
     legendDiv.id = 'stress-legend';
     legendDiv.style.cssText = `
-        position: fixed;
-        bottom: 20px;
-        right: 20px;
+        position: absolute;
+        left: 12px;
+        bottom: 12px;
         background: rgba(255, 255, 255, 0.95);
         border: 2px solid #333;
         border-radius: 8px;
         padding: 10px 15px;
-        z-index: 1000;
+        z-index: 10;
         font-family: Arial, sans-serif;
         box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+        pointer-events: none;
     `;
     
     // Title
@@ -2859,18 +2985,20 @@ function addStressLegend(stressType, minVal, maxVal) {
     title.textContent = titleMap[stressType] || stressType;
     legendDiv.appendChild(title);
     
-    // Color bar (Jet colormap: blue -> cyan -> green -> yellow -> red)
+    // Color bar - soft pastel FEA colormap matching the contour plot
     const colorBar = document.createElement('div');
     colorBar.style.cssText = `
         width: 150px;
         height: 20px;
         background: linear-gradient(to right, 
-            rgb(0, 0, 255),
-            rgb(0, 255, 255),
-            rgb(0, 255, 0),
-            rgb(255, 255, 0),
-            rgb(255, 0, 0));
-        border: 1px solid #333;
+            rgb(50, 60, 200),
+            rgb(60, 160, 220),
+            rgb(70, 200, 160),
+            rgb(110, 200, 70),
+            rgb(190, 210, 50),
+            rgb(235, 160, 45),
+            rgb(220, 60, 50));
+        border: 1px solid #999;
         border-radius: 2px;
     `;
     legendDiv.appendChild(colorBar);
@@ -2889,7 +3017,15 @@ function addStressLegend(stressType, minVal, maxVal) {
     
     legendDiv.appendChild(labelsDiv);
     
-    document.body.appendChild(legendDiv);
+    const canvasEl = window.sceneData?.renderer?.domElement;
+    const container = canvasEl?.parentElement || document.body;
+    if (container !== document.body) {
+        const computed = window.getComputedStyle(container);
+        if (computed.position === 'static') {
+            container.style.position = 'relative';
+        }
+    }
+    container.appendChild(legendDiv);
 }
 
 /**
@@ -2909,6 +3045,22 @@ window.clearPlateStressColors = function() {
             if (item.mesh && item.type === 'stress_color' && item.mesh.userData.originalMaterial) {
                 item.mesh.material = item.mesh.userData.originalMaterial;
                 delete item.mesh.userData.originalMaterial;
+            }
+
+            // Restore original (un-subdivided) geometry if we replaced it
+            if (item.mesh && item.type === 'stress_color' && item.mesh.userData.originalGeometry) {
+                item.mesh.geometry = item.mesh.userData.originalGeometry;
+                delete item.mesh.userData.originalGeometry;
+            }
+
+            // Restore edge visibility
+            if (item.mesh && item.type === 'stress_color' && item.mesh.children) {
+                item.mesh.children.forEach(child => {
+                    if (child && child.isLineSegments && child.userData && child.userData.prevVisible !== undefined) {
+                        child.visible = child.userData.prevVisible;
+                        delete child.userData.prevVisible;
+                    }
+                });
             }
         });
     }

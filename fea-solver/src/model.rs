@@ -421,7 +421,6 @@ impl FEModel {
         for plate in self.plates.values() {
             let i_node = self.nodes.get(&plate.i_node).unwrap();
             let j_node = self.nodes.get(&plate.j_node).unwrap();
-            let m_node = self.nodes.get(&plate.m_node).unwrap();
             let n_node = self.nodes.get(&plate.n_node).unwrap();
             let material = self.materials.get(&plate.material).unwrap();
             
@@ -649,17 +648,12 @@ impl FEModel {
             // Try plate first, then quad
             let (i_node, j_node, m_node, n_node, width, height) = 
                 if let Some(plate) = self.plates.get(plate_name) {
-                    let i = self.nodes.get(&plate.i_node).unwrap();
-                    let j = self.nodes.get(&plate.j_node).unwrap();
-                    let m = self.nodes.get(&plate.m_node).unwrap();
-                    let n = self.nodes.get(&plate.n_node).unwrap();
                     (plate.i_node.clone(), plate.j_node.clone(), plate.m_node.clone(), plate.n_node.clone(),
                      plate.width.unwrap(), plate.height.unwrap())
                 } else if let Some(quad) = self.quads.get(plate_name) {
                     let i = self.nodes.get(&quad.i_node).unwrap();
                     let j = self.nodes.get(&quad.j_node).unwrap();
                     let m = self.nodes.get(&quad.m_node).unwrap();
-                    let n = self.nodes.get(&quad.n_node).unwrap();
                     let width = i.distance_to(j);
                     let height = j.distance_to(m);
                     (quad.i_node.clone(), quad.j_node.clone(), quad.m_node.clone(), quad.n_node.clone(),
@@ -943,8 +937,6 @@ impl FEModel {
             let section = self.sections.get(&member.section).unwrap();
             let length = member.length.unwrap();
             let rotation = member.rotation;
-            let i_node_name = member.i_node.clone();
-            let j_node_name = member.j_node.clone();
             
             // Get nodal displacements
             let d_i = i_node.displacements.get(combo_name)
@@ -1289,9 +1281,10 @@ impl FEModel {
                            sigma_y_total.powi(2) + 3.0 * tau_xy_total.powi(2)).sqrt();
             
             Ok(PlateStressResult {
-                sx: sigma_x_total,
-                sy: sigma_y_total,
-                txy: tau_xy_total,
+                // Keep membrane components as-is; von_mises reflects surface (membrane + bending).
+                sx: membrane[0],
+                sy: membrane[1],
+                txy: membrane[2],
                 von_mises,
                 mx: moments[0],
                 my: moments[1],

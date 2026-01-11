@@ -86,7 +86,6 @@ pub fn member_transformation_matrix(
         // Match PyNite: find z perpendicular to x and horizontal (in XZ plane)
         // Project x onto global XZ plane
         let proj = [dx, 0.0, dz];
-        let proj_len = (proj[0].powi(2) + proj[2].powi(2)).sqrt();
         
         let z_unnorm = if x[1] > 0.0 {
             // Member going upward: z = proj cross x

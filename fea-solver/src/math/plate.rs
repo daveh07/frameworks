@@ -650,7 +650,6 @@ fn bending_curvature_b_matrix(j_inv: &[[f64; 2]; 2], r: f64, s: f64) -> [[f64; 1
     let mut b = [[0.0; 12]; 3];
     
     for i in 0..4 {
-        let col_w = i * 3;
         let col_rx = i * 3 + 1;
         let col_ry = i * 3 + 2;
         
@@ -750,15 +749,6 @@ fn bending_stiffness_dkmq(e: f64, nu: f64, t: f64, width: f64, height: f64, kx_m
     let kappa = 5.0 / 6.0;
     let hs_factor = kappa * g * t;
     let hs = [[hs_factor, 0.0], [0.0, hs_factor]];
-    
-    // Node positions in natural coordinates for rectangular element
-    // i=(-1,-1), j=(1,-1), m=(1,1), n=(-1,1)
-    let node_r = [-1.0, 1.0, 1.0, -1.0];
-    let node_s = [-1.0, -1.0, 1.0, 1.0];
-    
-    // Edge lengths and midpoint factors (for DKMQ interpolation)
-    let b = width / 2.0;
-    let c = height / 2.0;
     
     // Edge lengths (physical)
     let l_12 = width;   // i-j
@@ -864,22 +854,10 @@ fn dkmq_bending_b_matrix(
     // For thin plates (phi->0), approaches Kirchhoff behavior
     // For thick plates (phi->1), approaches Mindlin behavior
     
-    // Edge shape function derivatives for DKMQ
-    // N5 (midside 1-2), N6 (midside 2-3), N7 (midside 3-4), N8 (midside 4-1)
-    let n5_dr = 0.5 * (1.0 - s);   // lambda_1 + lambda_2 at midpoint
-    let n5_ds = -0.25 * r;
-    let n6_dr = 0.25 * s;
-    let n6_ds = 0.5 * (1.0 + r);
-    let n7_dr = -0.5 * (1.0 + s);
-    let n7_ds = 0.25 * r;
-    let n8_dr = -0.25 * s;
-    let n8_ds = -0.5 * (1.0 - r);
-    
     // Standard bending B matrix with phi corrections
     let mut b = [[0.0; 12]; 3];
     
     for i in 0..4 {
-        let col_w = i * 3;
         let col_rx = i * 3 + 1;
         let col_ry = i * 3 + 2;
         
@@ -1106,29 +1084,31 @@ pub fn plate_moments(
         d[i] = displacements[mi];
     }
     
-    // Calculate displacement coefficient matrix [C] and its inverse
-    // Then calculate [a] = inv([C]) * d
-    // Finally, moments = -[Db] * [Q] * [a]
-    
-    // For simplicity, approximate moments at center using bilinear interpolation
-    // of nodal rotations and second derivatives
-    
-    // This is a simplified calculation - for full accuracy, implement the
-    // polynomial coefficient approach from PyNite
-    
-    let rx_avg = (d[1] + d[4] + d[7] + d[10]) / 4.0;
-    let ry_avg = (d[2] + d[5] + d[8] + d[11]) / 4.0;
-    
-    // Approximate curvatures from rotation gradients
-    let kappa_x = -2.0 * ry_avg / width;  // d^2w/dx^2 ≈ -dry/dx
-    let kappa_y = 2.0 * rx_avg / height;   // d^2w/dy^2 ≈ drx/dy
-    let kappa_xy = (rx_avg / width + ry_avg / height);
-    
-    // M = Db * kappa
-    let mx = db[(0, 0)] * kappa_x + db[(0, 1)] * kappa_y;
-    let my = db[(1, 0)] * kappa_x + db[(1, 1)] * kappa_y;
-    let mxy = db[(2, 2)] * kappa_xy;
-    
+    // Convert x, y to natural coordinates r, s in [-1, 1]
+    // Note: This matches the bilinear shape functions used elsewhere.
+    let r = -1.0 + 2.0 * x / width;
+    let s = -1.0 + 2.0 * y / height;
+
+    // Curvatures (Mindlin-style): kappa = B_kappa * d
+    // This is used for Mindlin and DKMQ stiffness assembly; it's far more reliable
+    // than the old rotation-averaging approximation.
+    let j_inv = jacobian_inverse(width, height);
+    let b_kappa = bending_curvature_b_matrix(&j_inv, r, s);
+
+    let mut kappa = [0.0_f64; 3];
+    for row in 0..3 {
+        let mut sum = 0.0;
+        for col in 0..12 {
+            sum += b_kappa[row][col] * d[col];
+        }
+        kappa[row] = sum;
+    }
+
+    // Moment resultants per unit width: M = Db * kappa
+    let mx = db[(0, 0)] * kappa[0] + db[(0, 1)] * kappa[1] + db[(0, 2)] * kappa[2];
+    let my = db[(1, 0)] * kappa[0] + db[(1, 1)] * kappa[1] + db[(1, 2)] * kappa[2];
+    let mxy = db[(2, 0)] * kappa[0] + db[(2, 1)] * kappa[1] + db[(2, 2)] * kappa[2];
+
     [mx, my, mxy]
 }
 
@@ -1148,7 +1128,7 @@ pub fn plate_membrane_stress(
     displacements: &Vec24,
     e: f64,
     nu: f64,
-    t: f64,
+    _t: f64,
     width: f64,
     height: f64,
     kx_mod: f64,
