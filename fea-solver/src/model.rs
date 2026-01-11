@@ -7,8 +7,9 @@ use crate::analysis::{AnalysisOptions, AnalysisType};
 use crate::elements::{Material, Member, Node, Plate, Quad, Section, Support};
 use crate::error::{FEAError, FEAResult};
 use crate::loads::{DistributedLoad, LoadCombination, NodeLoad, PlateLoad, PointLoad};
-use crate::math::{self, Mat, Vec as FEVec};
+use crate::math::{self, Mat, Vec as FEVec, SparseMatrixBuilder, solve_pcg};
 use crate::results::{AnalysisSummary, MemberForces, NodeDisplacement, PlateStressResult, Reactions};
+use nalgebra_sparse::CsrMatrix;
 
 /// The main 3D finite element model
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -264,25 +265,54 @@ impl FEModel {
         // Prepare the model
         self.prepare_model()?;
 
-        // Build global stiffness matrix and load vector
-        let (k_global, dof_map) = self.build_global_stiffness()?;
+        // Map node names to DOF indices
+        let dof_map = self.build_dof_map();
+        let n_dofs = self.nodes.len() * 6;
+
+        // Use sparse or dense solver based on options
+        if options.sparse && self.nodes.len() > 50 {
+            // Sparse solver - much faster for larger models
+            self.analyze_sparse(&options, &dof_map, n_dofs)?;
+        } else {
+            // Dense solver - simpler, better for small models
+            self.analyze_dense(&options, &dof_map)?;
+        }
+
+        self.solution = Some(options.analysis_type);
+        Ok(())
+    }
+
+    /// Build DOF map from node names to indices
+    fn build_dof_map(&self) -> HashMap<String, usize> {
+        let mut dof_map: HashMap<String, usize> = HashMap::new();
+        for (name, node) in &self.nodes {
+            dof_map.insert(name.clone(), node.id.unwrap() * 6);
+        }
+        dof_map
+    }
+
+    /// Dense matrix analysis (original implementation)
+    fn analyze_dense(
+        &mut self, 
+        options: &AnalysisOptions, 
+        dof_map: &HashMap<String, usize>
+    ) -> FEAResult<()> {
+        // Build global stiffness matrix
+        let (k_global, _) = self.build_global_stiffness()?;
         
         // Analyze each load combination
         let combo_names: Vec<String> = self.load_combos.keys().cloned().collect();
         
         for combo_name in &combo_names {
             let combo = self.load_combos.get(combo_name).unwrap().clone();
+            let p_global = self.build_load_vector(&combo, dof_map)?;
             
-            // Build load vector for this combination
-            let p_global = self.build_load_vector(&combo, &dof_map)?;
-            
-            // Partition and solve based on analysis type
             match options.analysis_type {
                 AnalysisType::Linear => {
-                    self.solve_linear(&k_global, &p_global, &dof_map, combo_name)?;
+                    self.solve_linear(&k_global, &p_global, dof_map, combo_name)?;
                 }
                 AnalysisType::PDelta => {
-                    self.solve_p_delta(&k_global, &p_global, &dof_map, combo_name, &options)?;
+                    self.solve_p_delta(&k_global, &p_global, dof_map, combo_name, options)?;
                 }
                 _ => {
                     return Err(FEAError::AnalysisFailed(
@@ -291,15 +321,68 @@ impl FEModel {
                 }
             }
             
-            // Calculate member forces
             self.calculate_member_forces(combo_name)?;
-            
-            // Calculate reactions
-            self.calculate_reactions(combo_name, &dof_map)?;
+            self.calculate_reactions(combo_name, dof_map)?;
         }
-
-        self.solution = Some(options.analysis_type);
+        
         Ok(())
+    }
+
+    /// Sparse matrix analysis - optimized for large models
+    fn analyze_sparse(
+        &mut self,
+        options: &AnalysisOptions,
+        dof_map: &HashMap<String, usize>,
+        n_dofs: usize,
+    ) -> FEAResult<()> {
+        // Build sparse global stiffness matrix
+        let k_sparse = self.build_global_stiffness_sparse(dof_map, n_dofs)?;
+        
+        if options.log {
+            let nnz = k_sparse.nnz();
+            let total = n_dofs * n_dofs;
+            let sparsity = 100.0 * (1.0 - nnz as f64 / total as f64);
+            log::info!("Sparse matrix: {} DOFs, {} non-zeros ({:.1}% sparse)", 
+                n_dofs, nnz, sparsity);
+        }
+        
+        // Analyze each load combination
+        let combo_names: Vec<String> = self.load_combos.keys().cloned().collect();
+        
+        for combo_name in &combo_names {
+            let combo = self.load_combos.get(combo_name).unwrap().clone();
+            let p_global = self.build_load_vector(&combo, dof_map)?;
+            
+            match options.analysis_type {
+                AnalysisType::Linear => {
+                    self.solve_linear_sparse(&k_sparse, &p_global, dof_map, combo_name, n_dofs, options.tolerance)?;
+                }
+                AnalysisType::PDelta => {
+                    // Fall back to dense for P-Delta (geometric stiffness updates)
+                    let k_dense = self.sparse_to_dense(&k_sparse, n_dofs);
+                    self.solve_p_delta(&k_dense, &p_global, dof_map, combo_name, options)?;
+                }
+                _ => {
+                    return Err(FEAError::AnalysisFailed(
+                        "Analysis type not yet implemented".to_string(),
+                    ));
+                }
+            }
+            
+            self.calculate_member_forces(combo_name)?;
+            self.calculate_reactions(combo_name, dof_map)?;
+        }
+        
+        Ok(())
+    }
+
+    /// Convert sparse matrix to dense (for fallback)
+    fn sparse_to_dense(&self, csr: &CsrMatrix<f64>, n: usize) -> Mat {
+        let mut dense = Mat::zeros(n, n);
+        for (row, col, &val) in csr.triplet_iter() {
+            dense[(row, col)] = val;
+        }
+        dense
     }
 
     /// Prepare model for analysis (assign IDs, calculate lengths, etc.)
@@ -526,6 +609,281 @@ impl FEModel {
         }
 
         Ok((k_global, dof_map))
+    }
+
+    /// Build sparse global stiffness matrix - optimized for large models
+    fn build_global_stiffness_sparse(
+        &self,
+        dof_map: &HashMap<String, usize>,
+        n_dofs: usize,
+    ) -> FEAResult<CsrMatrix<f64>> {
+        let mut builder = SparseMatrixBuilder::new(n_dofs);
+
+        // Add member stiffness
+        for member in self.members.values() {
+            let i_node = self.nodes.get(&member.i_node).unwrap();
+            let j_node = self.nodes.get(&member.j_node).unwrap();
+            let material = self.materials.get(&member.material).unwrap();
+            let section = self.sections.get(&member.section).unwrap();
+            let length = member.length.unwrap();
+
+            let k_local = math::member_local_stiffness(
+                material.e, material.g, section.a, section.iy, section.iz, section.j, length,
+            );
+            let k_local = math::apply_releases(&k_local, &member.releases.as_array());
+            let t = math::member_transformation_matrix(&i_node.coords(), &j_node.coords(), member.rotation);
+            let k_member_global = t.transpose() * k_local * t;
+
+            let i_dof = dof_map[&member.i_node];
+            let j_dof = dof_map[&member.j_node];
+
+            // Add all 4 blocks (i-i, i-j, j-i, j-j)
+            for a in 0..6 {
+                for b in 0..6 {
+                    builder.add(i_dof + a, i_dof + b, k_member_global[(a, b)]);
+                    builder.add(i_dof + a, j_dof + b, k_member_global[(a, b + 6)]);
+                    builder.add(j_dof + a, i_dof + b, k_member_global[(a + 6, b)]);
+                    builder.add(j_dof + a, j_dof + b, k_member_global[(a + 6, b + 6)]);
+                }
+            }
+        }
+
+        // Add plate stiffness
+        for plate in self.plates.values() {
+            let i_node = self.nodes.get(&plate.i_node).unwrap();
+            let j_node = self.nodes.get(&plate.j_node).unwrap();
+            let n_node = self.nodes.get(&plate.n_node).unwrap();
+            let material = self.materials.get(&plate.material).unwrap();
+
+            let k_local = math::plate_local_stiffness_with_formulation(
+                material.e, material.nu, plate.thickness,
+                plate.width.unwrap(), plate.height.unwrap(),
+                plate.kx_mod, plate.ky_mod, plate.formulation,
+            );
+            let t = math::plate_transformation_matrix(&i_node.coords(), &j_node.coords(), &n_node.coords());
+            let k_plate_global = t.transpose() * k_local * t;
+
+            let dofs = [
+                dof_map[&plate.i_node], dof_map[&plate.j_node],
+                dof_map[&plate.m_node], dof_map[&plate.n_node],
+            ];
+
+            for (ni, &di) in dofs.iter().enumerate() {
+                for (nj, &dj) in dofs.iter().enumerate() {
+                    let ki = ni * 6;
+                    let kj = nj * 6;
+                    for a in 0..6 {
+                        for b in 0..6 {
+                            builder.add(di + a, dj + b, k_plate_global[(ki + a, kj + b)]);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Add quad element stiffness
+        for quad in self.quads.values() {
+            let i_node = self.nodes.get(&quad.i_node).unwrap();
+            let j_node = self.nodes.get(&quad.j_node).unwrap();
+            let n_node = self.nodes.get(&quad.n_node).unwrap();
+            let material = self.materials.get(&quad.material).unwrap();
+
+            let width = i_node.distance_to(j_node);
+            let height = j_node.distance_to(self.nodes.get(&quad.m_node).unwrap());
+
+            let k_local = math::plate_local_stiffness(
+                material.e, material.nu, quad.thickness, width, height, quad.kx_mod, quad.ky_mod,
+            );
+            let t = math::plate_transformation_matrix(&i_node.coords(), &j_node.coords(), &n_node.coords());
+            let k_quad_global = t.transpose() * k_local * t;
+
+            let dofs = [
+                dof_map[&quad.i_node], dof_map[&quad.j_node],
+                dof_map[&quad.m_node], dof_map[&quad.n_node],
+            ];
+
+            for (ni, &di) in dofs.iter().enumerate() {
+                for (nj, &dj) in dofs.iter().enumerate() {
+                    let ki = ni * 6;
+                    let kj = nj * 6;
+                    for a in 0..6 {
+                        for b in 0..6 {
+                            builder.add(di + a, dj + b, k_quad_global[(ki + a, kj + b)]);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(builder.to_csr())
+    }
+
+    /// Solve linear system with sparse matrix using PCG
+    fn solve_linear_sparse(
+        &mut self,
+        k_sparse: &CsrMatrix<f64>,
+        p_global: &FEVec,
+        dof_map: &HashMap<String, usize>,
+        combo_name: &str,
+        n_dofs: usize,
+        tolerance: f64,
+    ) -> FEAResult<()> {
+        // Identify free and restrained DOFs
+        let mut free_dofs: Vec<usize> = Vec::new();
+        let mut enforced_displacements: HashMap<usize, f64> = HashMap::new();
+
+        for node_name in self.nodes.keys() {
+            let base_dof = dof_map[node_name];
+            if let Some(support) = self.supports.get(node_name) {
+                let restraints = [support.dx, support.dy, support.dz, support.rx, support.ry, support.rz];
+                let enforced = support.enforced_displacements();
+                for i in 0..6 {
+                    if restraints[i] {
+                        if let Some(val) = enforced[i] {
+                            enforced_displacements.insert(base_dof + i, val);
+                        }
+                    } else {
+                        free_dofs.push(base_dof + i);
+                    }
+                }
+            } else {
+                for i in 0..6 {
+                    free_dofs.push(base_dof + i);
+                }
+            }
+        }
+
+        if free_dofs.is_empty() {
+            return Err(FEAError::AnalysisFailed("No free degrees of freedom".to_string()));
+        }
+
+        // Sort for consistent ordering
+        free_dofs.sort_unstable();
+
+        // Build reduced sparse system for free DOFs only
+        let n_free = free_dofs.len();
+        let free_to_idx: HashMap<usize, usize> = free_dofs.iter().enumerate().map(|(i, &d)| (d, i)).collect();
+
+        let mut k11_builder = SparseMatrixBuilder::new(n_free);
+        let mut p1 = FEVec::zeros(n_free);
+
+        // Extract K11 (free-free block) from sparse matrix
+        for (row, col, &val) in k_sparse.triplet_iter() {
+            if let (Some(&i), Some(&j)) = (free_to_idx.get(&row), free_to_idx.get(&col)) {
+                k11_builder.add(i, j, val);
+            }
+        }
+
+        // Build reduced load vector
+        for (i, &di) in free_dofs.iter().enumerate() {
+            p1[i] = p_global[di];
+            // Account for enforced displacements
+            for (&dj, &val) in &enforced_displacements {
+                // Need to get K[di, dj] from sparse matrix
+                for (row, col, &k_val) in k_sparse.triplet_iter() {
+                    if row == di && col == dj {
+                        p1[i] -= k_val * val;
+                    }
+                }
+            }
+        }
+
+        let k11 = k11_builder.to_csr();
+
+        // Check for unstable (zero diagonal) DOFs before solving
+        let unstable_dofs = self.check_stability(&k11, &free_dofs, dof_map)?;
+        if !unstable_dofs.is_empty() {
+            return Err(FEAError::Unstable(format!(
+                "Unstable DOFs detected: {}. Add supports or check model geometry.",
+                unstable_dofs.join(", ")
+            )));
+        }
+
+        // Solve using Preconditioned Conjugate Gradient
+        let max_iter = n_free * 2;  // Conservative max iterations
+        let d1 = match solve_pcg(&k11, &p1, tolerance, max_iter) {
+            Some(d) => d,
+            None => return Err(FEAError::SingularMatrix),
+        };
+
+        // Assemble full displacement vector
+        let mut d_full = FEVec::zeros(n_dofs);
+        for (i, &di) in free_dofs.iter().enumerate() {
+            d_full[di] = d1[i];
+        }
+        for (&di, &val) in &enforced_displacements {
+            d_full[di] = val;
+        }
+
+        // Store nodal displacements
+        for (node_name, node) in self.nodes.iter_mut() {
+            let base_dof = dof_map[node_name];
+            let disp = [
+                d_full[base_dof], d_full[base_dof + 1], d_full[base_dof + 2],
+                d_full[base_dof + 3], d_full[base_dof + 4], d_full[base_dof + 5],
+            ];
+            node.displacements.insert(combo_name.to_string(), disp);
+        }
+
+        Ok(())
+    }
+
+    /// Check stiffness matrix for unstable (zero diagonal) DOFs
+    /// 
+    /// Returns a list of unstable DOF descriptions for error reporting
+    fn check_stability(
+        &self,
+        k11: &CsrMatrix<f64>,
+        free_dofs: &[usize],
+        dof_map: &HashMap<String, usize>,
+    ) -> FEAResult<Vec<String>> {
+        let mut unstable = Vec::new();
+        let zero_threshold = 1e-10;
+        
+        // Build reverse mapping from DOF index to (node_name, dof_type)
+        let mut idx_to_node: HashMap<usize, (&String, usize)> = HashMap::new();
+        for (node_name, &base_dof) in dof_map {
+            for i in 0..6 {
+                idx_to_node.insert(base_dof + i, (node_name, i));
+            }
+        }
+        
+        // Extract diagonal values from reduced system
+        let n_free = free_dofs.len();
+        let mut diag = vec![0.0; n_free];
+        
+        for (row, col, &val) in k11.triplet_iter() {
+            if row == col {
+                diag[row] = val;
+            }
+        }
+        
+        // Check each free DOF's diagonal for near-zero values
+        for (reduced_idx, &global_dof) in free_dofs.iter().enumerate() {
+            if diag[reduced_idx].abs() < zero_threshold {
+                // Map back to node and DOF type
+                if let Some(&(node_name, dof_type)) = idx_to_node.get(&global_dof) {
+                    let dof_name = match dof_type {
+                        0 => "DX",
+                        1 => "DY",
+                        2 => "DZ",
+                        3 => "RX",
+                        4 => "RY",
+                        5 => "RZ",
+                        _ => "Unknown",
+                    };
+                    unstable.push(format!("Node {} - {}", node_name, dof_name));
+                    
+                    // Limit to first 10 unstable DOFs to avoid overwhelming output
+                    if unstable.len() >= 10 {
+                        unstable.push("... and more".to_string());
+                        break;
+                    }
+                }
+            }
+        }
+        
+        Ok(unstable)
     }
 
     /// Build the global load vector for a load combination

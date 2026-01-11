@@ -1,8 +1,15 @@
 //! Mathematical utilities for FEA calculations
 
 pub mod plate;
+pub mod sparse;
 
 use nalgebra::{DMatrix, DVector, Matrix3, Matrix6, SMatrix, SVector, Vector3};
+
+// Re-export sparse utilities
+pub use sparse::{
+    SparseMatrixBuilder, SparseCholeskySolver,
+    solve_cg, solve_pcg, reverse_cuthill_mckee,
+};
 
 pub type Mat = DMatrix<f64>;
 pub type Vec = DVector<f64>;

@@ -19,7 +19,7 @@ path = "src/bin/example.rs"
 [features]
 default = ["server"]
 server = ["axum", "tokio"]
-wasm = ["wasm-bindgen", "console_error_panic_hook", "wee_alloc"]
+wasm = ["wasm-bindgen", "console_error_panic_hook", "wee_alloc", "js-sys", "web-sys"]
 
 [dependencies]
 # Core math
@@ -47,6 +47,8 @@ tower-http = { version = "0.6", features = ["cors"] }
 wasm-bindgen = { version = "0.2", optional = true }
 console_error_panic_hook = { version = "0.1", optional = true }
 wee_alloc = { version = "0.4", optional = true }
+js-sys = { version = "0.3", optional = true }
+web-sys = { version = "0.3", optional = true, features = ["console"] }
 
 [dev-dependencies]
 approx = "0.5"

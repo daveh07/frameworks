@@ -71,23 +71,23 @@ function getFEAServerUrl() {
     
     // Check if running in GitHub Codespaces
     if (currentHost.includes('.app.github.dev')) {
-        // Extract the codespace name and construct the port 8086 URL
+        // Extract the codespace name and construct the port 8084 URL
         // Format: {codespace-name}-{port}.app.github.dev
         const match = currentHost.match(/^(.+)-(\d+)\.app\.github\.dev$/);
         if (match) {
             const codespaceName = match[1];
-            // Note: Port 8086 must be set to "Public" visibility in Codespaces
-            return `https://${codespaceName}-8086.app.github.dev`;
+            // Note: Port 8084 must be set to "Public" visibility in Codespaces
+            return `https://${codespaceName}-8084.app.github.dev`;
         }
     }
     
     // Default to localhost for local development
-    return 'http://localhost:8086';
+    return 'http://localhost:8084';
 }
 
 const FEA_SERVER_URL = getFEAServerUrl();
 console.log('FEA Server URL:', FEA_SERVER_URL);
-console.log('NOTE: If running in Codespaces, ensure port 8086 is set to PUBLIC visibility');
+console.log('NOTE: If running in Codespaces, ensure port 8084 is set to PUBLIC visibility');
 
 // ========================
 // Console Progress Tracker
@@ -148,6 +148,135 @@ class ConsoleProgressTracker {
 
 // Global progress tracker instance
 let feaProgressTracker = null;
+
+// ========================
+// WASM Solver Manager
+// ========================
+
+class WASMSolverManager {
+    constructor() {
+        this.worker = null;
+        this.ready = false;
+        this.pendingRequests = new Map();
+        this.requestIdCounter = 0;
+        this.initAttempted = false;
+        this.fallbackToHttp = false;
+    }
+
+    async init() {
+        if (this.initAttempted) return this.ready;
+        this.initAttempted = true;
+
+        return new Promise((resolve) => {
+            try {
+                // Create worker - use the correct path based on deployment
+                const workerPath = this.getWorkerPath();
+                this.worker = new Worker(workerPath, { type: 'module' });
+                
+                const timeout = setTimeout(() => {
+                    console.warn('[WASM] Initialization timeout, falling back to HTTP server');
+                    this.fallbackToHttp = true;
+                    resolve(false);
+                }, 10000); // 10 second timeout
+
+                this.worker.onmessage = (e) => {
+                    const { type, id, success, results, error, timing, version, ready } = e.data;
+                    
+                    if (type === 'ready') {
+                        clearTimeout(timeout);
+                        this.ready = true;
+                        console.log(`%c🚀 WASM FEA Solver v${version} ready!`, 'color: #4CAF50; font-weight: bold');
+                        resolve(true);
+                    } else if (type === 'error') {
+                        clearTimeout(timeout);
+                        console.warn('[WASM] Worker error:', error);
+                        this.fallbackToHttp = true;
+                        resolve(false);
+                    } else if (type === 'result') {
+                        const pending = this.pendingRequests.get(id);
+                        if (pending) {
+                            this.pendingRequests.delete(id);
+                            if (success) {
+                                pending.resolve({ success, results, timing });
+                            } else {
+                                pending.reject(new Error(error));
+                            }
+                        }
+                    } else if (type === 'pong') {
+                        // Health check response
+                    }
+                };
+
+                this.worker.onerror = (error) => {
+                    clearTimeout(timeout);
+                    console.warn('[WASM] Worker failed to load:', error.message);
+                    this.fallbackToHttp = true;
+                    resolve(false);
+                };
+            } catch (error) {
+                console.warn('[WASM] Failed to create worker:', error);
+                this.fallbackToHttp = true;
+                resolve(false);
+            }
+        });
+    }
+
+    getWorkerPath() {
+        // Determine the correct path to the worker based on deployment
+        // For Dioxus, assets are served from /assets/
+        return '/assets/js/fea_solver_worker.js';
+    }
+
+    async analyze(model, options = {}) {
+        if (!this.ready || this.fallbackToHttp) {
+            throw new Error('WASM solver not available');
+        }
+
+        return new Promise((resolve, reject) => {
+            const id = ++this.requestIdCounter;
+            this.pendingRequests.set(id, { resolve, reject });
+            
+            this.worker.postMessage({
+                type: 'analyze',
+                id: id,
+                model: model,
+                options: options
+            });
+        });
+    }
+
+    isAvailable() {
+        return this.ready && !this.fallbackToHttp;
+    }
+}
+
+// Global WASM solver instance
+const wasmSolver = new WASMSolverManager();
+
+// Initialize WASM solver on page load (non-blocking)
+(async () => {
+    await wasmSolver.init();
+    if (wasmSolver.isAvailable()) {
+        window.feaSolverMode = 'wasm';
+        console.log('%c⚡ Using WASM solver (in-browser, fastest)', 'color: #4CAF50; font-weight: bold');
+    } else {
+        window.feaSolverMode = 'http';
+        console.log('%c🌐 Using HTTP solver (server-side Rust)', 'color: #2196F3');
+    }
+})();
+
+// Allow manual override
+window.setFEASolverMode = function(mode) {
+    if (mode === 'wasm' && wasmSolver.isAvailable()) {
+        window.feaSolverMode = 'wasm';
+        console.log('%c⚡ Switched to WASM solver', 'color: #4CAF50');
+    } else if (mode === 'http') {
+        window.feaSolverMode = 'http';
+        console.log('%c🌐 Switched to HTTP solver', 'color: #2196F3');
+    } else {
+        console.warn('Invalid solver mode or WASM not available');
+    }
+};
 
 // ========================
 // Structure Data Extraction
@@ -725,12 +854,16 @@ function calculateSectionProperties(section) {
 // ========================
 
 window.runFEAAnalysis = async function(materialConfig, beamSectionConfig, analysisType = 'linear') {
+    // Determine which solver to use
+    const useWasm = window.feaSolverMode === 'wasm' && wasmSolver.isAvailable();
+    const solverName = useWasm ? 'WASM (in-browser)' : 'HTTP (server)';
+    
     // Start progress tracking
-    feaProgressTracker = new ConsoleProgressTracker('FEA Analysis');
+    feaProgressTracker = new ConsoleProgressTracker(`FEA Analysis [${solverName}]`);
     feaProgressTracker.start();
     
     if (window.addSolverLog) {
-        window.addSolverLog('Starting FEA analysis...', 'info');
+        window.addSolverLog(`Starting FEA analysis using ${solverName}...`, 'info');
     }
 
     feaProgressTracker.update('Extracting structure data...');
@@ -770,58 +903,73 @@ window.runFEAAnalysis = async function(materialConfig, beamSectionConfig, analys
     
     if (window.addSolverLog) {
         window.addSolverLog(`Model: ${modelSummary}, ${model.supports.length} supports`, 'info');
-        window.addSolverLog('Sending to FEA solver...', 'info');
+        window.addSolverLog(`Solving with ${solverName}...`, 'info');
     }
 
+    const analysisOptions = {
+        analysis_type: analysisType,
+        max_iterations: 30
+    };
+
     try {
-        const request = {
-            model: model,
-            options: {
-                analysis_type: analysisType,
-                max_iterations: 30
-            }
-        };
-
-        feaProgressTracker.update('Sending request to solver backend (not WASM - server-side Rust)...');
+        let data;
         
-        const response = await fetch(`${FEA_SERVER_URL}/api/v1/analyze`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(request)
-        });
-
-        if (!response.ok) {
-            // Try to get error message from response body
-            let errorMsg = `HTTP error: ${response.status}`;
-            try {
-                const errorData = await response.json();
-                if (errorData.error) {
-                    errorMsg = errorData.error;
-                }
-            } catch (e) {
-                // Response body wasn't JSON
+        if (useWasm) {
+            // Use WASM solver (runs in Web Worker)
+            feaProgressTracker.update('Running WASM solver (in-browser, no network)...');
+            const wasmResult = await wasmSolver.analyze(model, analysisOptions);
+            data = {
+                success: wasmResult.success,
+                results: wasmResult.results,
+                timing: wasmResult.timing
+            };
+            if (wasmResult.timing) {
+                feaProgressTracker.update(`WASM solver completed in ${wasmResult.timing.solver_ms}ms`);
             }
-            if (window.addSolverLog) window.addSolverLog(errorMsg, 'error');
-            console.error('FEA Server Error:', errorMsg);
-            feaProgressTracker.error(errorMsg);
-            return { error: errorMsg };
-        }
+        } else {
+            // Use HTTP server
+            feaProgressTracker.update('Sending request to HTTP solver...');
+            
+            const request = {
+                model: model,
+                options: analysisOptions
+            };
 
-        feaProgressTracker.update('Processing solver response...');
-        const data = await response.json();
+            const response = await fetch(`${FEA_SERVER_URL}/api/v1/analyze`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(request)
+            });
+
+            if (!response.ok) {
+                let errorMsg = `HTTP error: ${response.status}`;
+                try {
+                    const errorData = await response.json();
+                    if (errorData.error) {
+                        errorMsg = errorData.error;
+                    }
+                } catch (e) {
+                    // Response body wasn't JSON
+                }
+                if (window.addSolverLog) window.addSolverLog(errorMsg, 'error');
+                console.error('FEA Server Error:', errorMsg);
+                feaProgressTracker.error(errorMsg);
+                return { error: errorMsg };
+            }
+
+            feaProgressTracker.update('Processing solver response...');
+            data = await response.json();
+        }
 
         if (data.success && data.results) {
             // Calculate actual max deflection for simply-supported beams with UDL
-            // (since node displacements are 0 at supports)
             let calculatedMaxDefl = data.results.summary.max_displacement;
             
-            // Get material and section properties
             const mat = model.materials[0] || { e: 200e9 };
             const sec = model.sections[0] || { iy: 0.001 };
             const E = mat.e;
             const I = sec.iy;
             
-            // Check each member for distributed loads
             model.members.forEach(member => {
                 const iNode = model.nodes.find(n => n.name === member.i_node);
                 const jNode = model.nodes.find(n => n.name === member.j_node);
@@ -833,7 +981,6 @@ window.runFEAAnalysis = async function(materialConfig, beamSectionConfig, analys
                     Math.pow(jNode.z - iNode.z, 2)
                 );
                 
-                // Find distributed loads on this member
                 let w = 0;
                 model.distributed_loads.forEach(load => {
                     if (load.member === member.name && load.direction === 'FY') {
@@ -842,28 +989,23 @@ window.runFEAAnalysis = async function(materialConfig, beamSectionConfig, analys
                 });
                 
                 if (w > 0 && E > 0 && I > 0) {
-                    // Simply supported: δmax = 5wL⁴/(384EI)
                     const maxDefl = 5 * w * Math.pow(L, 4) / (384 * E * I);
                     calculatedMaxDefl = Math.max(calculatedMaxDefl, maxDefl);
                 }
             });
             
-            // Update the summary with calculated deflection
             data.results.summary.max_displacement = calculatedMaxDefl;
             
+            const timingInfo = data.timing ? ` (solver: ${data.timing.solver_ms}ms)` : '';
             if (window.addSolverLog) {
-                window.addSolverLog('Analysis completed successfully!', 'success');
+                window.addSolverLog(`Analysis completed successfully!${timingInfo}`, 'success');
                 window.addSolverLog(`Max displacement: ${(calculatedMaxDefl * 1000).toFixed(2)} mm`, 'info');
             }
             
-            // Complete progress tracking
-            feaProgressTracker.complete(`Max displacement: ${(calculatedMaxDefl * 1000).toFixed(2)} mm`);
+            feaProgressTracker.complete(`Max displacement: ${(calculatedMaxDefl * 1000).toFixed(2)} mm${timingInfo}`);
             
-            // Store results globally
             window.feaResults = data.results;
             window.feaModel = model;
-            
-            // Update visualization
             window.updateFEAVisualization(data.results, model);
             
             return { success: true, results: data.results };
@@ -874,6 +1016,14 @@ window.runFEAAnalysis = async function(materialConfig, beamSectionConfig, analys
             return { error };
         }
     } catch (error) {
+        // If WASM failed, try HTTP as fallback
+        if (useWasm && window.feaSolverMode !== 'http') {
+            console.warn('[WASM] Solver failed, falling back to HTTP:', error);
+            feaProgressTracker.update('WASM failed, falling back to HTTP server...');
+            window.feaSolverMode = 'http';
+            return window.runFEAAnalysis(materialConfig, beamSectionConfig, analysisType);
+        }
+        
         if (window.addSolverLog) window.addSolverLog(`Error: ${error.toString()}`, 'error');
         feaProgressTracker.error(error.toString());
         return { error: error.toString() };
