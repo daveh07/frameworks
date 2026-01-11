@@ -2679,22 +2679,22 @@ window.showPlateStress = function(stressType = 'von_mises') {
     
     console.log(`Plate ${stressType} stress range: ${minStress.toExponential(2)} to ${maxStress.toExponential(2)}`);
     
-    // Color function using soft rainbow/jet colormap matching commercial FEA style
-    // Blue -> Cyan -> Green -> Yellow -> Orange -> Red with soft pastel tones
+    // Color function using rainbow/jet colormap matching commercial FEA style
+    // Blue -> Cyan -> Green -> Yellow -> Orange -> Red with darker, richer tones
     function getStressColor(value) {
         const t = Math.max(0, Math.min(1, (value - minStress) / stressRange));
         const color = new THREE.Color();
 
-        // Soft but visible FEA-style colormap (balanced saturation)
+        // Darker, more saturated FEA-style colormap
         // Format: { t: position 0-1, r/g/b: 0-255 sRGB values }
         const colorStops = [
-            { t: 0.00, r: 50,  g: 60,  b: 200 },  // Blue
-            { t: 0.20, r: 60,  g: 160, b: 220 },  // Light blue/cyan
-            { t: 0.35, r: 70,  g: 200, b: 160 },  // Cyan-green
-            { t: 0.50, r: 110, g: 200, b: 70  },  // Green
-            { t: 0.65, r: 190, g: 210, b: 50  },  // Yellow-green
-            { t: 0.80, r: 235, g: 160, b: 45  },  // Orange
-            { t: 1.00, r: 220, g: 60,  b: 50  },  // Red
+            { t: 0.00, r: 30,  g: 40,  b: 160 },  // Deep blue
+            { t: 0.20, r: 30,  g: 120, b: 180 },  // Medium blue/cyan
+            { t: 0.35, r: 30,  g: 160, b: 130 },  // Teal
+            { t: 0.50, r: 60,  g: 160, b: 50  },  // Green
+            { t: 0.65, r: 160, g: 170, b: 30  },  // Yellow-green
+            { t: 0.80, r: 210, g: 120, b: 30  },  // Orange
+            { t: 1.00, r: 180, g: 30,  b: 30  },  // Deep red
         ];
         
         // Find the two color stops to interpolate between
@@ -2717,7 +2717,7 @@ window.showPlateStress = function(stressType = 'von_mises') {
             b = c0.b + s * (c1.b - c0.b);
         }
         
-        // Convert to 0-1 range and set directly (no need for sRGB conversion with these soft values)
+        // Convert to 0-1 range and set directly
         color.setRGB(r / 255, g / 255, b / 255);
         return color;
     }
@@ -2985,19 +2985,19 @@ function addStressLegend(stressType, minVal, maxVal) {
     title.textContent = titleMap[stressType] || stressType;
     legendDiv.appendChild(title);
     
-    // Color bar - soft pastel FEA colormap matching the contour plot
+    // Color bar - darker FEA colormap matching the contour plot
     const colorBar = document.createElement('div');
     colorBar.style.cssText = `
         width: 150px;
         height: 20px;
         background: linear-gradient(to right, 
-            rgb(50, 60, 200),
-            rgb(60, 160, 220),
-            rgb(70, 200, 160),
-            rgb(110, 200, 70),
-            rgb(190, 210, 50),
-            rgb(235, 160, 45),
-            rgb(220, 60, 50));
+            rgb(30, 40, 160),
+            rgb(30, 120, 180),
+            rgb(30, 160, 130),
+            rgb(60, 160, 50),
+            rgb(160, 170, 30),
+            rgb(210, 120, 30),
+            rgb(180, 30, 30));
         border: 1px solid #999;
         border-radius: 2px;
     `;
