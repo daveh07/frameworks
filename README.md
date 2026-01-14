@@ -11,9 +11,11 @@ Frameworkz is a comprehensive structural analysis platform that combines:
 - **Cross-platform**: Runs in any modern web browser
 
 ### Examples:
-  <img width="1914" height="930" alt="image" src="https://github.com/user-attachments/assets/787277d5-170f-4abe-bdcd-0acf93c7c113" />
+<img width="1914" height="930" alt="image" src="https://github.com/user-attachments/assets/787277d5-170f-4abe-bdcd-0acf93c7c113" />
 <img width="1910" height="962" alt="image" src="https://github.com/user-attachments/assets/ee167aaa-c647-4485-a806-ba153fdb1285" />
 <img width="1910" height="962" alt="image" src="https://github.com/user-attachments/assets/461b591e-e887-4e3c-b5a8-f05817d7b48f" />
+<img width="1910" height="962" alt="image" src="https://github.com/user-attachments/assets/264e3d5a-eb05-400d-a05d-2e3b18dcd6fc" />
+
 
 
 ##  Architecture
