@@ -65,6 +65,24 @@ window.setDiagramScale = function(scale) {
 // FEA Server URL Configuration
 // ========================
 
+// Turn on for very verbose per-node/per-element logs.
+// Keeping this off matters a lot for large plate meshes (console logging is slow).
+if (typeof window.FEA_VERBOSE_LOGGING === 'undefined') {
+    window.FEA_VERBOSE_LOGGING = false;
+}
+
+function feaDebugLog(...args) {
+    if (window.FEA_VERBOSE_LOGGING) {
+        console.log(...args);
+    }
+}
+
+function feaDebugWarn(...args) {
+    if (window.FEA_VERBOSE_LOGGING) {
+        console.warn(...args);
+    }
+}
+
 // Detect Codespaces and construct the correct URL
 function getFEAServerUrl() {
     const currentHost = window.location.hostname;
@@ -81,7 +99,10 @@ function getFEAServerUrl() {
         }
     }
     
-    // Default to localhost for local development
+    // Default to local development.
+    // Prefer matching the current host to avoid oddities (e.g. IPv6 localhost resolution).
+    if (currentHost === '127.0.0.1') return 'http://127.0.0.1:8086';
+    if (currentHost === 'localhost') return 'http://localhost:8086';
     return 'http://localhost:8086';
 }
 
@@ -100,22 +121,11 @@ class ConsoleProgressTracker {
         this.intervalId = null;
         this.frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
         this.frameIndex = 0;
-        this.lastLoggedTime = 0;
     }
 
     start() {
         this.startTime = performance.now();
         console.log(`%c🔄 ${this.taskName} started...`, 'color: #4CAF50; font-weight: bold');
-        
-        // Update progress every 500ms
-        this.intervalId = setInterval(() => {
-            const elapsed = ((performance.now() - this.startTime) / 1000).toFixed(1);
-            const frame = this.frames[this.frameIndex];
-            this.frameIndex = (this.frameIndex + 1) % this.frames.length;
-            
-            // Clear previous line and print new status
-            console.log(`%c${frame} ${this.taskName}... ${elapsed}s elapsed`, 'color: #2196F3');
-        }, 500);
     }
 
     update(message) {
@@ -193,7 +203,7 @@ window.extractFEAStructure = function(materialConfig, beamSectionConfig) {
             y: nodeMesh.position.y,
             z: nodeMesh.position.z
         });
-        console.log(`Node ${nodeName}:`, nodeMesh.position);
+        feaDebugLog(`Node ${nodeName}:`, nodeMesh.position);
     });
 
     // Add material
@@ -297,7 +307,10 @@ window.extractFEAStructure = function(materialConfig, beamSectionConfig) {
                     rotation: rotation,
                     releases: releases
                 });
-                console.log(`Member ${memberName}: ${startNodeName} -> ${endNodeName}, rotation=${rotation}°, releases:`, releases);
+                feaDebugLog(
+                    `Member ${memberName}: ${startNodeName} -> ${endNodeName}, rotation=${rotation}°, releases:`,
+                    releases
+                );
                 memberIdx++;
             }
         }
@@ -316,7 +329,7 @@ window.extractFEAStructure = function(materialConfig, beamSectionConfig) {
                 // Find the mesh visualization group
                 const meshViz = plate.children.find(c => c.userData.isMeshViz);
                 if (meshViz) {
-                    console.log(`Plate mesh elements: ${meshViz.children.length}`);
+                    feaDebugLog(`Plate mesh elements: ${meshViz.children.length}`);
                     meshViz.children.forEach((element) => {
                         if (element.userData.isMeshElement && element.userData.nodes && element.userData.nodes.length === 4) {
                             const nodes = element.userData.nodes;
@@ -354,10 +367,12 @@ window.extractFEAStructure = function(materialConfig, beamSectionConfig) {
                                     ky_mod: 1.0,
                                     formulation: formulation
                                 });
-                                console.log(`Plate ${plateName}: ${iNodeName} -> ${jNodeName} -> ${mNodeName} -> ${nNodeName}, t=${plateThickness}, formulation=${formulation}`);
+                                feaDebugLog(
+                                    `Plate ${plateName}: ${iNodeName} -> ${jNodeName} -> ${mNodeName} -> ${nNodeName}, t=${plateThickness}, formulation=${formulation}`
+                                );
                                 plateIdx++;
                             } else {
-                                console.warn('Plate element has nodes not in nodePositionMap');
+                                feaDebugWarn('Plate element has nodes not in nodePositionMap');
                             }
                         }
                     });
@@ -395,7 +410,9 @@ window.extractFEAStructure = function(materialConfig, beamSectionConfig) {
                             ky_mod: 1.0,
                             formulation: formulation
                         });
-                        console.log(`Plate ${plateName} (unmeshed): ${iNodeName} -> ${jNodeName} -> ${mNodeName} -> ${nNodeName}, t=${plateThickness}, formulation=${formulation}`);
+                        feaDebugLog(
+                            `Plate ${plateName} (unmeshed): ${iNodeName} -> ${jNodeName} -> ${mNodeName} -> ${nNodeName}, t=${plateThickness}, formulation=${formulation}`
+                        );
                         plateIdx++;
                     }
                 }
@@ -783,12 +800,24 @@ window.runFEAAnalysis = async function(materialConfig, beamSectionConfig, analys
         };
 
         feaProgressTracker.update('Sending request to solver backend (not WASM - server-side Rust)...');
+
+        // If the backend isn't running (or an intermediate proxy is wedged), fetch can appear to
+        // “hang forever”. Put a hard cap on wait time so UX recovers.
+        const controller = new AbortController();
+        const timeoutMs = 30000;
+        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
         
-        const response = await fetch(`${FEA_SERVER_URL}/api/v1/analyze`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(request)
-        });
+        let response;
+        try {
+            response = await fetch(`${FEA_SERVER_URL}/api/v1/analyze`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(request),
+                signal: controller.signal
+            });
+        } finally {
+            clearTimeout(timeoutId);
+        }
 
         if (!response.ok) {
             // Try to get error message from response body
@@ -874,9 +903,16 @@ window.runFEAAnalysis = async function(materialConfig, beamSectionConfig, analys
             return { error };
         }
     } catch (error) {
-        if (window.addSolverLog) window.addSolverLog(`Error: ${error.toString()}`, 'error');
-        feaProgressTracker.error(error.toString());
-        return { error: error.toString() };
+        let errorMsg = error?.toString ? error.toString() : String(error);
+        if (error && error.name === 'AbortError') {
+            errorMsg = `Timed out after 30s calling ${FEA_SERVER_URL}/api/v1/analyze. Is the Rust backend running (cargo run --bin fea-server)?`;
+        } else if (typeof errorMsg === 'string' && errorMsg.toLowerCase().includes('failed to fetch')) {
+            errorMsg = `Network error calling ${FEA_SERVER_URL}/api/v1/analyze. This usually means the backend isn't running, the port is blocked, or the browser couldn't complete CORS preflight.`;
+        }
+
+        if (window.addSolverLog) window.addSolverLog(`Error: ${errorMsg}`, 'error');
+        feaProgressTracker.error(errorMsg);
+        return { error: errorMsg };
     }
 };
 
