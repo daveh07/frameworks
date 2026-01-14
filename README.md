@@ -532,7 +532,13 @@ Debug by checking generated INP file in `calculix-service/debug_export/`
 
 ## 📄 License
 
-[Add license here]
+Proprietary License
+
+Copyright © 2025 frameworks cloud FEA. All Rights Reserved.
+
+This software and associated documentation files are proprietary. 
+No part may be reproduced, distributed, or transmitted in any form 
+without prior written permission from the copyright holder.
 
 ---
 
