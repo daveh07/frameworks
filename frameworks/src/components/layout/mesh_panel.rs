@@ -87,6 +87,14 @@ pub fn MeshPanel(show_panel: Signal<bool>) -> Element {
                     },
                     "Generate Mesh"
                 }
+                button {
+                    class: "btn-secondary",
+                    onclick: move |_| {
+                        // Clear mesh for selected plates; if none selected, JS will clear all plates.
+                        eval("if(window.clearMesh) { window.clearMesh(true); } else { console.error('clearMesh not available'); }");
+                    },
+                    "Clear Mesh"
+                }
                 div {
                     class: "btn-group",
                     button {

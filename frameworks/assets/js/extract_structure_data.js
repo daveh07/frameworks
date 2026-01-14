@@ -10,8 +10,8 @@ window.extractStructureData = function(material, defaultThickness) {
     // Get beam section from global (set by analysis panel)
     const beamSection = window.currentBeamSection || {
         section_type: 'Rectangular',
-        width: 0.3,
-        height: 0.5,
+        width: 0.1,
+        height: 0.2,
         flange_thickness: 0.02,
         web_thickness: 0.015
     };

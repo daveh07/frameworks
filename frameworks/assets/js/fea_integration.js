@@ -804,7 +804,7 @@ window.runFEAAnalysis = async function(materialConfig, beamSectionConfig, analys
         // If the backend isn't running (or an intermediate proxy is wedged), fetch can appear to
         // “hang forever”. Put a hard cap on wait time so UX recovers.
         const controller = new AbortController();
-        const timeoutMs = 30000;
+        const timeoutMs = 300000;  // 5 minutes for large plate models
         const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
         
         let response;

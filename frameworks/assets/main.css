@@ -801,8 +801,8 @@ input:focus, select:focus, textarea:focus {
 
 .console-action-btn {
   background: #ffffff;
-  border: 1.5px solid #333333;
-  color: #333333;
+  border: 1.5px solid #0852ff;
+  color: #007bff;
   cursor: pointer;
   font-size: 12px;
   font-weight: 500;
@@ -816,14 +816,14 @@ input:focus, select:focus, textarea:focus {
 
 .console-action-btn:hover {
   background: #f5f5f5;
-  border-color: #111111;
-  color: #111111;
+  border-color: #0b006e;
+  color: #2100da;
 }
 
 .console-action-btn.active {
   background: #e8e8e8;
-  border-color: #111111;
-  color: #111111;
+  border-color: #000b5d;
+  color: #0014f1;
 }
 
 .console-action-btn.danger {
@@ -2719,10 +2719,10 @@ input:focus, select:focus, textarea:focus {
 .btn-diagram {
     padding: var(--spacing-md);
     background: #ffffff;
-    color: var(--color-text);
+    color: #0052a3;
     font-size: var(--text-sm);
     font-weight: 500;
-    border: 1px solid var(--color-border);
+    border: 1px solid #0052a3;
     border-radius: var(--radius-sm);
     cursor: pointer;
     text-align: left;

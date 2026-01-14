@@ -54,8 +54,9 @@ impl Default for BeamProperties {
     fn default() -> Self {
         Self {
             section_type: "Rectangular".to_string(),
-            width: 0.3,
-            height: 0.5,
+            // Default to a standard 200mm (deep) x 100mm (wide) rectangular section.
+            width: 0.1,
+            height: 0.2,
             flange_thickness: 0.015,
             web_thickness: 0.010,
             releases: MemberReleases::default(),
