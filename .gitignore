@@ -46,3 +46,4 @@ calculix-service/debug_export/
 # Generated JS files (synced from src/ by build.rs)
 frameworks/public/js/*.js
 
+pynite-reference/
