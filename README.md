@@ -6,7 +6,7 @@ A modern web-based structural engineering application featuring real-time 3D vis
 
 Frameworkz is a comprehensive structural analysis platform that combines:
 - **Interactive 3D Modeling**: Web-based interface built with Dioxus and Three.js
-- **Finite Element Analysis**: Powered by CalculiX, a proven open-source FEA solver
+- **Finite Element Analysis**: Rust written FEA solver
 - **Real-time Visualization**: Instant feedback with deformed shapes, stress contours, and force diagrams
 - **Cross-platform**: Runs in any modern web browser
 
