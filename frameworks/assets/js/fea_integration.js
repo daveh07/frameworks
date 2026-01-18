@@ -942,23 +942,46 @@ window.clearFEADiagrams = function() {
     if (!sceneData) return;
 
     window.feaDiagramObjects.forEach(obj => {
-        // Handle stress coloring - restore original material
+        // Handle stress coloring - restore original material AND geometry
         if (obj.type === 'stress_color' && obj.mesh) {
             const mesh = obj.mesh;
+            
+            // Restore original geometry if it was replaced
+            if (mesh.userData && mesh.userData.originalGeometry) {
+                // Dispose the subdivided geometry
+                if (mesh.geometry && mesh.geometry !== mesh.userData.originalGeometry) {
+                    mesh.geometry.dispose();
+                }
+                mesh.geometry = mesh.userData.originalGeometry;
+                delete mesh.userData.originalGeometry;
+            }
+            
+            // Restore original material
             if (mesh.userData && mesh.userData.originalMaterial) {
-                // Restore from cloned original material
-                const origMat = mesh.userData.originalMaterial;
-                mesh.material.color.copy(origMat.color);
-                mesh.material.transparent = origMat.transparent;
-                mesh.material.opacity = origMat.opacity;
-                mesh.material.depthWrite = origMat.depthWrite !== undefined ? origMat.depthWrite : true;
-                mesh.material.depthTest = origMat.depthTest !== undefined ? origMat.depthTest : true;
+                // Dispose current material if different
+                if (mesh.material && mesh.material !== mesh.userData.originalMaterial) {
+                    mesh.material.dispose();
+                }
+                mesh.material = mesh.userData.originalMaterial;
                 mesh.material.needsUpdate = true;
-                
-                // Clean up
                 delete mesh.userData.originalMaterial;
                 delete mesh.userData.hasStressOverlay;
             }
+            
+            // Restore mesh outline visibility
+            mesh.children.forEach(child => {
+                if (child && child.isLineSegments && child.userData.prevVisible !== undefined) {
+                    child.visible = child.userData.prevVisible;
+                    if (child.material) {
+                        child.material.transparent = false;
+                        child.material.opacity = 1.0;
+                        child.material.depthTest = true;
+                        child.material.needsUpdate = true;
+                    }
+                    child.renderOrder = 0;
+                    delete child.userData.prevVisible;
+                }
+            });
         } else {
             // Remove from scene (for drawn diagram objects)
             sceneData.scene.remove(obj);
@@ -2816,16 +2839,18 @@ window.showPlateStress = function(stressType = 'von_mises') {
         const t = Math.max(0, Math.min(1, (value - minStress) / stressRange));
         const color = new THREE.Color();
 
-        // Darker, more saturated FEA-style colormap
+        // High contrast, saturated FEA-style colormap (like ANSYS/Abaqus)
         // Format: { t: position 0-1, r/g/b: 0-255 sRGB values }
         const colorStops = [
-            { t: 0.00, r: 30,  g: 40,  b: 160 },  // Deep blue
-            { t: 0.20, r: 30,  g: 120, b: 180 },  // Medium blue/cyan
-            { t: 0.35, r: 30,  g: 160, b: 130 },  // Teal
-            { t: 0.50, r: 60,  g: 160, b: 50  },  // Green
-            { t: 0.65, r: 160, g: 170, b: 30  },  // Yellow-green
-            { t: 0.80, r: 210, g: 120, b: 30  },  // Orange
-            { t: 1.00, r: 180, g: 30,  b: 30  },  // Deep red
+            { t: 0.00, r: 0,   g: 0,   b: 180 },  // Deep blue
+            { t: 0.15, r: 0,   g: 80,  b: 220 },  // Blue
+            { t: 0.30, r: 0,   g: 180, b: 200 },  // Cyan
+            { t: 0.45, r: 0,   g: 200, b: 80  },  // Cyan-green
+            { t: 0.55, r: 80,  g: 200, b: 0   },  // Green
+            { t: 0.65, r: 180, g: 200, b: 0   },  // Yellow-green
+            { t: 0.75, r: 255, g: 180, b: 0   },  // Yellow/Orange
+            { t: 0.85, r: 255, g: 80,  b: 0   },  // Orange
+            { t: 1.00, r: 200, g: 0,   b: 0   },  // Deep red
         ];
         
         // Find the two color stops to interpolate between
