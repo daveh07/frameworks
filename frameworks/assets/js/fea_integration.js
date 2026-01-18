@@ -895,6 +895,11 @@ window.runFEAAnalysis = async function(materialConfig, beamSectionConfig, analys
             // Update visualization
             window.updateFEAVisualization(data.results, model);
             
+            // Update tabulated results panel
+            if (window.updateTablesPanel) {
+                window.updateTablesPanel(data.results);
+            }
+            
             return { success: true, results: data.results };
         } else {
             const error = data.error || 'Analysis failed';
@@ -1743,6 +1748,7 @@ window.showFEABendingMomentDiagramInternal = function(plane = 'XY', clearFirst =
         let Mi, Vi, Mj;
 
         // Get perpendicular direction BEFORE moment calculation
+        // This defines the positive direction for moment offset (tension side convention)
         const perpDir = getPerpendicular(memberDir, isXY, memberMidpoint, frameCentroid, minX, maxX, minZ, maxZ);
 
         if (isVertical) {
@@ -1754,13 +1760,29 @@ window.showFEABendingMomentDiagramInternal = function(plane = 'XY', clearFirst =
                 Mj = forces.moment_z_j;
             }
 
-            // Normalize sign: multiply by perpDir component so diagram always bulges outward for tension side
-            // perpDir.x is -1 for left columns, +1 for right columns (XY view)
-            // perpDir.z is -1 for back columns, +1 for front columns (XZ view)
-            // Note: XZ plane (My) needs negative sign to show outward correctly
-            const signCorrection = isXY ? perpDir.x : -perpDir.z;
-            Mi = Mi * signCorrection;
-            Mj = Mj * signCorrection;
+            // For columns: Apply sign based on column position to ensure consistent
+            // orientation across the frame. The perpDir points outward from frame center.
+            //
+            // Key insight for fixed bases: Mi and Mj may have OPPOSITE signs!
+            // - Fixed base creates tension on inside at base (negative moment when viewing from outside)
+            // - Joint moment creates tension on outside at top (positive moment)
+            // - This creates a "crossover" in the diagram
+            //
+            // The columnSide factor ensures that:
+            // - For left columns: positive values bulge left (outward)
+            // - For right columns: positive values bulge right (outward)
+            // If Mi and Mj have opposite signs, the diagram will naturally cross over.
+            const columnSide = isXY ? Math.sign(perpDir.x) : -Math.sign(perpDir.z);
+            
+            // Debug: log the raw and adjusted moments
+            console.log(`Column ${member.name}: raw Mi=${(forces.moment_y_i/1000).toFixed(2)}, Mj=${(forces.moment_y_j/1000).toFixed(2)}, columnSide=${columnSide}`);
+            
+            Mi = Mi * columnSide;
+            Mj = Mj * columnSide;
+            
+            console.log(`Column ${member.name}: adjusted Mi=${(Mi/1000).toFixed(2)}, Mj=${(Mj/1000).toFixed(2)}`);
+            console.log(`Column ${member.name}: Mi sign=${Mi >= 0 ? '+' : '-'}, Mj sign=${Mj >= 0 ? '+' : '-'}, will ${Math.sign(Mi) !== Math.sign(Mj) ? 'CROSS OVER' : 'NOT cross'}`);
+
 
             Vi = (Mi - Mj) / length;
         } else {
@@ -1886,7 +1908,7 @@ window.showFEABendingMomentDiagramInternal = function(plane = 'XY', clearFirst =
             } else {
                 segColor = M_avg >= 0 ? saggingColor : hoggingColor;
             }
-            const segMaterial = new THREE.LineBasicMaterial({ color: segColor, linewidth: 2 });
+            const segMaterial = new THREE.LineBasicMaterial({ color: segColor, linewidth: 1 });
             const segLine = new THREE.Line(segGeometry, segMaterial);
             sceneData.scene.add(segLine);
             window.feaDiagramObjects.push(segLine);
@@ -2175,7 +2197,7 @@ window.showFEAShearForceDiagramInternal = function(plane = 'XY') {
             const segGeometry = new THREE.BufferGeometry().setFromPoints(segPoints);
             const V_avg = (shears[i] + shears[i + 1]) / 2;
             const segColor = V_avg > 0 ? positiveColor : negativeColor;
-            const segMaterial = new THREE.LineBasicMaterial({ color: segColor, linewidth: 2 });
+            const segMaterial = new THREE.LineBasicMaterial({ color: segColor, linewidth: 1 });
             const segLine = new THREE.Line(segGeometry, segMaterial);
             sceneData.scene.add(segLine);
             window.feaDiagramObjects.push(segLine);
@@ -2336,7 +2358,7 @@ window.showFEAAxialForceDiagram = function() {
         
         // Draw outline
         const outlineGeometry = new THREE.BufferGeometry().setFromPoints([p1, p4, p3, p2, p1]);
-        const outlineMaterial = new THREE.LineBasicMaterial({ color: color, linewidth: 2 });
+        const outlineMaterial = new THREE.LineBasicMaterial({ color: color, linewidth: 1 });
         const outline = new THREE.Line(outlineGeometry, outlineMaterial);
         sceneData.scene.add(outline);
         window.feaDiagramObjects.push(outline);
@@ -2378,13 +2400,8 @@ window.showFEAReactions = function(scale = 0.001) {
         nodePos.set(n.name, new THREE.Vector3(n.x, n.y, n.z));
     });
 
-    // Auto-scale based on max reaction value - make arrows more visible
-    let maxReaction = 0;
-    results.reactions.forEach(r => {
-        maxReaction = Math.max(maxReaction, Math.abs(r.fx), Math.abs(r.fy), Math.abs(r.fz));
-    });
-    // Larger scale factor for more visible arrows (2.5 instead of 1.5)
-    const autoScale = maxReaction > 0 ? 2.5 / maxReaction : 0.001;
+    // Fixed arrow length for all reactions (uniform size, not scaled by magnitude)
+    const arrowLength = 1.0;
     
     // Build reactions summary for console/log
     const reactionsSummary = [];
@@ -2393,20 +2410,26 @@ window.showFEAReactions = function(scale = 0.001) {
         const pos = nodePos.get(reaction.node);
         if (!pos) return;
 
-        // Reaction component data with brighter, more visible colors
-        const reactions = [
-            { dir: new THREE.Vector3(1, 0, 0), value: reaction.fx, label: 'Rx', color: 0xff0000 }, // Bright red
-            { dir: new THREE.Vector3(0, 1, 0), value: reaction.fy, label: 'Ry', color: 0x00ff00 }, // Bright green  
-            { dir: new THREE.Vector3(0, 0, 1), value: reaction.fz, label: 'Rz', color: 0x0088ff }  // Bright blue
+        // Reaction force components with distinct colors
+        const forceReactions = [
+            { dir: new THREE.Vector3(1, 0, 0), value: reaction.fx, label: 'Rx', color: 0xff0000 }, // Bright red (horizontal X)
+            { dir: new THREE.Vector3(0, 1, 0), value: reaction.fy, label: 'Ry', color: 0x006400 }, // Dark green (vertical Y) - distinct from support
+            { dir: new THREE.Vector3(0, 0, 1), value: reaction.fz, label: 'Rz', color: 0x0088ff }  // Bright blue (horizontal Z)
         ];
 
-        const labelParts = [];
+        // Reaction moment components
+        const momentReactions = [
+            { value: reaction.mx || 0, label: 'Mx' },
+            { value: reaction.my || 0, label: 'My' },
+            { value: reaction.mz || 0, label: 'Mz' }
+        ];
+
+        const labelLines = [];
         const summaryParts = [];
 
-        reactions.forEach(r => {
+        forceReactions.forEach(r => {
             const absVal = Math.abs(r.value);
-            if (absVal > 1) { // Only show significant reactions
-                const arrowLength = Math.max(0.5, absVal * autoScale); // Minimum arrow length of 0.5
+            if (absVal > 1) { // Only show significant reactions (> 1 N)
                 const arrowDir = r.dir.clone().multiplyScalar(r.value > 0 ? 1 : -1);
                 
                 // Arrow starts from below the support and points toward the structure
@@ -2431,26 +2454,52 @@ window.showFEAReactions = function(scale = 0.001) {
                 sceneData.scene.add(arrow);
                 window.feaDiagramObjects.push(arrow);
                 
-                // Collect label info
+                // Collect label info - each on its own line
                 const valueKn = r.value / 1000;
-                labelParts.push(`${r.label}=${valueKn.toFixed(1)}`);
+                labelLines.push(`${r.label}=${valueKn.toFixed(1)} kN`);
                 summaryParts.push(`${r.label}=${valueKn.toFixed(2)} kN`);
             }
         });
 
-        // Add combined label below the support
-        if (labelParts.length > 0) {
-            const labelText = labelParts.join(', ');
-            addDiagramLabelClean(pos.clone().add(new THREE.Vector3(0, -0.8, 0)), labelText, sceneData);
+        // Add moment reactions to labels (for fixed supports)
+        momentReactions.forEach(m => {
+            const absVal = Math.abs(m.value);
+            if (absVal > 1) { // Only show significant moments (> 1 N·m)
+                const valueKnm = m.value / 1000;
+                labelLines.push(`${m.label}=${valueKnm.toFixed(1)} kN·m`);
+                summaryParts.push(`${m.label}=${valueKnm.toFixed(2)} kN·m`);
+            }
+        });
+
+        // Add multi-line label below the support
+        if (labelLines.length > 0) {
+            addMultiLineDiagramLabel(pos.clone().add(new THREE.Vector3(0, -0.8, 0)), labelLines, sceneData);
             
             // Add to summary
             reactionsSummary.push(`${reaction.node}: ${summaryParts.join(', ')}`);
         }
     });
 
-    // Log reactions summary
+    // Log reactions summary as a table
     console.log('=== REACTIONS SUMMARY ===');
-    reactionsSummary.forEach(line => console.log(line));
+    
+    // Build table data for console.table
+    const tableData = [];
+    results.reactions.forEach(reaction => {
+        const row = {
+            'Node': reaction.node,
+            'Rx (kN)': (reaction.fx / 1000).toFixed(2),
+            'Ry (kN)': (reaction.fy / 1000).toFixed(2),
+            'Rz (kN)': (reaction.fz / 1000).toFixed(2)
+        };
+        // Add moments if present
+        if (reaction.mx !== undefined) row['Mx (kN·m)'] = (reaction.mx / 1000).toFixed(2);
+        if (reaction.my !== undefined) row['My (kN·m)'] = (reaction.my / 1000).toFixed(2);
+        if (reaction.mz !== undefined) row['Mz (kN·m)'] = (reaction.mz / 1000).toFixed(2);
+        tableData.push(row);
+    });
+    
+    console.table(tableData);
     console.log('========================');
     
     if (window.addSolverLog) {
@@ -2460,6 +2509,49 @@ window.showFEAReactions = function(scale = 0.001) {
         });
     }
 };
+
+// Helper function to add multi-line label for reactions
+function addMultiLineDiagramLabel(position, lines, sceneData) {
+    const labelScale = window.feaLabelScale || 1.0;
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    const dpr = 2; // Higher resolution
+    const lineHeight = 22 * dpr;
+    const padding = 8 * dpr;
+    
+    canvas.width = 180 * dpr;
+    canvas.height = (lines.length * lineHeight + padding * 2);
+    
+    // Clear - transparent background
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // Draw each line
+    context.font = `${16 * dpr}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+    context.fillStyle = '#000000';
+    context.textAlign = 'left';
+    context.textBaseline = 'top';
+    
+    lines.forEach((line, i) => {
+        context.fillText(line, padding, padding + i * lineHeight);
+    });
+    
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.minFilter = THREE.LinearFilter;
+    const spriteMaterial = new THREE.SpriteMaterial({ 
+        map: texture, 
+        transparent: true,
+        depthTest: false
+    });
+    const sprite = new THREE.Sprite(spriteMaterial);
+    
+    sprite.position.copy(position);
+    // Adjust scale based on number of lines
+    const heightScale = 0.25 * lines.length * labelScale;
+    sprite.scale.set(1.4 * labelScale, heightScale, 1);
+    
+    sceneData.scene.add(sprite);
+    window.feaDiagramObjects.push(sprite);
+}
 
 // Helper function to add clean text label (no background)
 // Uses window.feaLabelScale for dynamic sizing
@@ -2568,7 +2660,10 @@ window.getFEAResultsSummary = function() {
             node: r.node,
             fx: r.fx / 1000,
             fy: r.fy / 1000,
-            fz: r.fz / 1000
+            fz: r.fz / 1000,
+            mx: (r.mx || 0) / 1000,
+            my: (r.my || 0) / 1000,
+            mz: (r.mz || 0) / 1000
         })),
         memberForces: results.member_forces.map(f => ({
             member: f.member,

@@ -6,6 +6,7 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js';
 import { selectedNodes, selectedBeams, selectedPlates, selectedElements, createNode, createBeam, createPlateMesh, findBeamBetweenPositions } from './geometry_manager.js';
 import { addNodeSelectionHighlight, removeNodeSelectionHighlight } from './scene_setup.js';
+import { updateNodeLabels, updateBeamLabels } from './labels_manager.js';
 
 // Selection highlights group reference (set by three_canvas.js)
 let selectionHighlightsGroup = null;
@@ -1079,6 +1080,7 @@ export function handleSelectClick() {
             selectedBeams.delete(beam);
             beam.material.color.setHex(beam.userData.originalColor || 0x0077ff);
             beam.material.emissive.setHex(beam.userData.originalEmissive || 0x0033ff);
+            window.dispatchEvent(new CustomEvent('beam-deselected', { detail: { id: beam.userData.id || beam.uuid } }));
         } else {
             selectedBeams.add(beam);
             if (!beam.userData.originalColor) {
@@ -1087,6 +1089,10 @@ export function handleSelectClick() {
             }
             beam.material.color.setHex(0x00ff00);
             beam.material.emissive.setHex(0x00aa00);
+            // Notify split beam panel if open
+            if (typeof notifyBeamSelectedForSplit === 'function') {
+                notifyBeamSelectedForSplit();
+            }
         }
         console.log(`${selectedBeams.size} beam(s) selected`);
     }
@@ -1621,3 +1627,194 @@ export function showCopyContextMenu(x, y, sceneData) {
         });
     }, 100);
 }
+
+/**
+ * Split a selected beam into multiple segments
+ * @param {Object} options - Split options
+ * @param {string} options.mode - 'equal' for equal segments, 'position' for split at position
+ * @param {number} options.count - Number of segments (for 'equal' mode)
+ * @param {number} options.position - Position along beam 0-1 (for 'position' mode)
+ */
+export function splitSelectedBeam(options) {
+    const sceneData = window.sceneData;
+    if (!sceneData) {
+        console.error('No scene data available');
+        return;
+    }
+    
+    // Get the first selected beam (selectedBeams is a Set)
+    if (selectedBeams.size === 0) {
+        console.warn('No beam selected to split');
+        return;
+    }
+    
+    const beamMesh = selectedBeams.values().next().value;
+    const startNode = beamMesh.userData.startNode;
+    const endNode = beamMesh.userData.endNode;
+    
+    if (!startNode || !endNode) {
+        console.error('Beam missing node references');
+        return;
+    }
+    
+    const startPos = startNode.position.clone();
+    const endPos = endNode.position.clone();
+    const beamLength = startPos.distanceTo(endPos);
+    const beamDir = new THREE.Vector3().subVectors(endPos, startPos).normalize();
+    
+    // Get beam properties to copy
+    const beamUserData = beamMesh.userData || {};
+    const rotation = beamUserData.rotation || 0;
+    const section = beamUserData.section || { width: 0.3, height: 0.5 };
+    const releases = beamUserData.releases || {};
+    
+    console.log(`Splitting beam: ${beamUserData.memberName || 'unnamed'}`);
+    console.log(`Length: ${beamLength.toFixed(3)}m, Mode: ${options.mode}`);
+    
+    // Calculate split positions
+    let splitPositions = []; // Array of t values (0-1) where to create new nodes
+    
+    if (options.mode === 'equal') {
+        const count = options.count || 2;
+        for (let i = 1; i < count; i++) {
+            splitPositions.push(i / count);
+        }
+    } else if (options.mode === 'position') {
+        const pos = options.position || 0.5;
+        if (pos > 0 && pos < 1) {
+            splitPositions.push(pos);
+        }
+    }
+    
+    if (splitPositions.length === 0) {
+        console.warn('No valid split positions');
+        return;
+    }
+    
+    // Create new nodes at split positions
+    const newNodes = [];
+    splitPositions.forEach((t, idx) => {
+        const pos = new THREE.Vector3().lerpVectors(startPos, endPos, t);
+        const newNode = createNode(sceneData.nodesGroup, pos, true); // skipLabelUpdate=true for bulk
+        if (newNode) {
+            newNodes.push({ node: newNode, t: t });
+            console.log(`Created split node at t=${t.toFixed(3)}: (${pos.x.toFixed(3)}, ${pos.y.toFixed(3)}, ${pos.z.toFixed(3)})`);
+        }
+    });
+    
+    // Sort nodes by position along beam
+    newNodes.sort((a, b) => a.t - b.t);
+    
+    // Clear the beam from selection first
+    selectedBeams.delete(beamMesh);
+    
+    // Restore beam's original appearance before removing
+    if (beamMesh.userData.originalColor) {
+        beamMesh.material.color.setHex(beamMesh.userData.originalColor);
+    }
+    if (beamMesh.userData.originalEmissive !== undefined) {
+        beamMesh.material.emissive.setHex(beamMesh.userData.originalEmissive);
+    }
+    
+    // Remove the original beam
+    sceneData.beamsGroup.remove(beamMesh);
+    if (beamMesh.geometry) beamMesh.geometry.dispose();
+    if (beamMesh.material) beamMesh.material.dispose();
+    
+    // Create new beams connecting the nodes
+    const allNodes = [
+        { node: startNode, t: 0 },
+        ...newNodes,
+        { node: endNode, t: 1 }
+    ];
+    
+    const newBeams = [];
+    for (let i = 0; i < allNodes.length - 1; i++) {
+        const n1 = allNodes[i].node;
+        const n2 = allNodes[i + 1].node;
+        
+        const segmentLength = n1.position.distanceTo(n2.position);
+        
+        // Create beam with correct signature: createBeam(beamsGroup, startPos, endPos, startNode, endNode, skipLabelUpdate)
+        const newBeam = createBeam(sceneData.beamsGroup, n1.position.clone(), n2.position.clone(), n1, n2, true);
+        
+        if (newBeam) {
+            // Copy properties from original beam
+            newBeam.userData.rotation = rotation;
+            newBeam.userData.section = section;
+            // Only apply releases at the original beam ends
+            if (i === 0 && releases.i_node_ry !== undefined) {
+                newBeam.userData.releases.i_node_ry = releases.i_node_ry;
+                newBeam.userData.releases.i_node_rz = releases.i_node_rz;
+            }
+            if (i === allNodes.length - 2 && releases.j_node_ry !== undefined) {
+                newBeam.userData.releases.j_node_ry = releases.j_node_ry;
+                newBeam.userData.releases.j_node_rz = releases.j_node_rz;
+            }
+            newBeams.push(newBeam);
+            console.log(`Created segment ${i + 1}: length=${segmentLength.toFixed(3)}m`);
+        }
+    }
+    
+    // Update labels after all nodes and beams are created
+    updateNodeLabels(sceneData.nodesGroup);
+    updateBeamLabels(sceneData.beamsGroup);
+    
+    console.log(`Split complete: created ${newNodes.length} new nodes and ${newBeams.length} new beams`);
+    
+    // Notify the split panel that the beam is no longer selected
+    window.dispatchEvent(new CustomEvent('beam-deselected'));
+    
+    // Dispatch event for UI update
+    window.dispatchEvent(new CustomEvent('beam-split-complete', {
+        detail: {
+            originalBeam: beamUserData.memberName,
+            newNodesCount: newNodes.length,
+            newBeamsCount: newBeams.length
+        }
+    }));
+    
+    return { newNodes: newNodes.map(n => n.node), newBeams };
+}
+
+// Expose to window for Rust integration
+window.splitSelectedBeam = splitSelectedBeam;
+
+/**
+ * Get info about the first selected beam for the split panel
+ */
+export function getSelectedBeamInfo() {
+    if (selectedBeams.size === 0) {
+        return null;
+    }
+    
+    const beamMesh = selectedBeams.values().next().value;
+    const startNode = beamMesh.userData.startNode;
+    const endNode = beamMesh.userData.endNode;
+    
+    if (!startNode || !endNode) {
+        return null;
+    }
+    
+    const length = startNode.position.distanceTo(endNode.position);
+    const name = beamMesh.userData.memberName || `Beam_${beamMesh.uuid.slice(0, 6)}`;
+    
+    return { name, length };
+}
+
+window.getSelectedBeamInfo = getSelectedBeamInfo;
+
+// Dispatch beam selection event for split panel
+export function notifyBeamSelectedForSplit() {
+    const info = getSelectedBeamInfo();
+    if (info) {
+        window.dispatchEvent(new CustomEvent('beam-selected-for-split', {
+            detail: info
+        }));
+    } else {
+        window.dispatchEvent(new CustomEvent('beam-deselected'));
+    }
+}
+
+window.notifyBeamSelectedForSplit = notifyBeamSelectedForSplit;
+

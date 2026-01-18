@@ -10,6 +10,7 @@ pub fn ContentArea() -> Element {
     let show_pressure_load_panel = use_signal(|| false);
     let show_analysis_panel = use_signal(|| false);
     let show_mesh_panel = use_signal(|| false);
+    let show_split_beam_panel = use_signal(|| false);
     
     // New property panels
     let show_beam_properties = use_signal(|| false);
@@ -40,6 +41,7 @@ pub fn ContentArea() -> Element {
                             show_beam_properties: show_beam_properties,
                             show_shell_properties: show_shell_properties,
                             show_material_properties: show_material_properties,
+                            show_split_beam_panel: show_split_beam_panel,
                         }
                     }
                     div { class: "canvas-wrapper",
@@ -82,6 +84,9 @@ pub fn ContentArea() -> Element {
                     crate::components::layout::MaterialPropertiesPanel {
                         show: show_material_properties,
                         properties: material_properties,
+                    }
+                    crate::components::layout::SplitBeamPanel {
+                        show_panel: show_split_beam_panel,
                     }
                 }
             }

@@ -51,9 +51,13 @@ function displayResultsSummary(results) {
     });
     
     console.log('\nReactions:');
-    results.reactions.forEach(r => {
-        console.log(`  Node ${r.node_id}: Fy=${r.fy.toFixed(2)} N, Mz=${r.mz.toFixed(2)} N⋅m`);
-    });
+    // Display reactions as a table
+    const reactionTableData = results.reactions.map(r => ({
+        'Node': r.node_id,
+        'Fy (N)': r.fy.toFixed(2),
+        'Mz (N·m)': r.mz.toFixed(2)
+    }));
+    console.table(reactionTableData);
     
     console.log('\nStresses:');
     results.stresses.forEach(s => {

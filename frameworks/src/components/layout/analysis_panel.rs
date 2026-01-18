@@ -194,7 +194,7 @@ pub fn AnalysisPanel(
                                 class: "scale-slider",
                                 min: "0",
                                 max: "100",
-                                step: "1",
+                                step: "0.2",
                                 value: "{deform_scale}",
                                 oninput: move |evt| {
                                     if let Ok(v) = evt.value().parse::<f64>() {

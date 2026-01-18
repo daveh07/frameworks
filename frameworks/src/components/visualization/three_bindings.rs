@@ -1,11 +1,7 @@
 use wasm_bindgen::prelude::*;
-use web_sys::HtmlCanvasElement;
 
 #[wasm_bindgen]
 extern "C" {
-    #[wasm_bindgen(catch, js_name = "init_three_canvas")]
-    pub async fn init_three_canvas(canvas: HtmlCanvasElement) -> Result<JsValue, JsValue>;
-    
     #[wasm_bindgen(js_name = "toggleAddNodeMode")]
     pub fn toggle_add_node_mode() -> bool;
     

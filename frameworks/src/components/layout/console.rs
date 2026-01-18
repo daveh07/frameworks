@@ -83,17 +83,24 @@ pub fn Console() -> Element {
                     container.innerHTML = html;
                 };
                 
-                // Update tables panel
+                // Update tables panel - supports both legacy format and FEA server format
                 window.updateTablesPanel = function(results) {
                     if (!results) return;
                     
+                    // Also check for FEA results in window.feaResults
+                    const feaResults = window.feaResults;
+                    
                     // Update displacements table
                     const dispTable = document.querySelector('.displacements-table tbody');
-                    if (dispTable && results.displacements) {
+                    if (dispTable) {
                         let html = '';
-                        results.displacements.forEach(function(d) {
+                        // Try FEA format first (node_displacements), then legacy format (displacements)
+                        const disps = feaResults?.node_displacements || results?.displacements || [];
+                        disps.forEach(function(d) {
                             html += '<tr>';
-                            html += '<td>' + (d.node_id + 1) + '</td>'; // Display 1-based
+                            // Handle both formats: node (string) or node_id (number)
+                            const nodeName = d.node !== undefined ? d.node : (d.node_id !== undefined ? (d.node_id + 1) : '?');
+                            html += '<td>' + nodeName + '</td>';
                             html += '<td>' + (d.dx * 1000).toFixed(4) + '</td>';
                             html += '<td>' + (d.dy * 1000).toFixed(4) + '</td>';
                             html += '<td>' + (d.dz * 1000).toFixed(4) + '</td>';
@@ -106,11 +113,15 @@ pub fn Console() -> Element {
                     
                     // Update reactions table
                     const reactTable = document.querySelector('.reactions-table tbody');
-                    if (reactTable && results.reactions) {
+                    if (reactTable) {
                         let html = '';
-                        results.reactions.forEach(function(r) {
+                        // Try FEA format first, then legacy format
+                        const reactions = feaResults?.reactions || results?.reactions || [];
+                        reactions.forEach(function(r) {
                             html += '<tr>';
-                            html += '<td>' + (r.node_id + 1) + '</td>'; // Display 1-based
+                            // Handle both formats: node (string) or node_id (number)
+                            const nodeName = r.node !== undefined ? r.node : (r.node_id !== undefined ? (r.node_id + 1) : '?');
+                            html += '<td>' + nodeName + '</td>';
                             html += '<td>' + (r.fx/1000).toFixed(2) + '</td>';
                             html += '<td>' + (r.fy/1000).toFixed(2) + '</td>';
                             html += '<td>' + (r.fz/1000).toFixed(2) + '</td>';
@@ -124,16 +135,26 @@ pub fn Console() -> Element {
                     
                     // Update beam forces table
                     const beamTable = document.querySelector('.beam-forces-table tbody');
-                    if (beamTable && results.beam_forces) {
+                    if (beamTable) {
                         let html = '';
-                        results.beam_forces.forEach(function(bf) {
+                        // Try FEA format first (member_forces), then legacy format (beam_forces)
+                        const forces = feaResults?.member_forces || results?.beam_forces || [];
+                        forces.forEach(function(bf) {
                             html += '<tr>';
-                            html += '<td>' + (bf.element_id + 1) + '</td>'; // Display 1-based
-                            html += '<td>' + (bf.axial_force/1000).toFixed(2) + '</td>';
-                            html += '<td>' + ((bf.shear_y || 0)/1000).toFixed(2) + '</td>';
-                            html += '<td>' + ((bf.shear_z || 0)/1000).toFixed(2) + '</td>';
-                            html += '<td>' + ((bf.moment_y || 0)/1000).toFixed(2) + '</td>';
-                            html += '<td>' + ((bf.moment_z || 0)/1000).toFixed(2) + '</td>';
+                            // Handle both formats: member (string) or element_id (number)
+                            const elemName = bf.member !== undefined ? bf.member : (bf.element_id !== undefined ? (bf.element_id + 1) : '?');
+                            html += '<td>' + elemName + '</td>';
+                            // Handle both formats for force data
+                            const axial = bf.axial_i !== undefined ? bf.axial_i : (bf.axial_force || 0);
+                            const vy = bf.shear_y_i !== undefined ? bf.shear_y_i : (bf.shear_y || 0);
+                            const vz = bf.shear_z_i !== undefined ? bf.shear_z_i : (bf.shear_z || 0);
+                            const my = bf.moment_y_i !== undefined ? bf.moment_y_i : (bf.moment_y || 0);
+                            const mz = bf.moment_z_i !== undefined ? bf.moment_z_i : (bf.moment_z || 0);
+                            html += '<td>' + (axial/1000).toFixed(2) + '</td>';
+                            html += '<td>' + (vy/1000).toFixed(2) + '</td>';
+                            html += '<td>' + (vz/1000).toFixed(2) + '</td>';
+                            html += '<td>' + (my/1000).toFixed(2) + '</td>';
+                            html += '<td>' + (mz/1000).toFixed(2) + '</td>';
                             html += '</tr>';
                         });
                         beamTable.innerHTML = html;

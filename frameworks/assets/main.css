@@ -1626,6 +1626,123 @@ input:focus, select:focus, textarea:focus {
 }
 
 /* ============================================
+   Split Beam Panel Styles
+   ============================================ */
+
+.split-beam-panel {
+  position: absolute;
+  top: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 320px;
+  background: #ffffff;
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  z-index: 1000;
+  overflow: hidden;
+}
+
+.split-beam-panel .panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  background: #f8f9fa;
+  border-bottom: 1px solid #e9ecef;
+}
+
+.split-beam-panel .panel-header h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #2c3e50;
+}
+
+.split-beam-panel .panel-header .close-btn {
+  background: none;
+  border: none;
+  font-size: 20px;
+  color: #6c757d;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.split-beam-panel .panel-header .close-btn:hover {
+  color: #dc3545;
+}
+
+.split-beam-panel .panel-content {
+  padding: 16px;
+}
+
+.split-beam-panel .form-group {
+  margin-bottom: 14px;
+}
+
+.split-beam-panel .form-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  color: #495057;
+  margin-bottom: 6px;
+}
+
+.split-beam-panel .form-input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #ced4da;
+  border-radius: 4px;
+  font-size: 13px;
+  color: #495057;
+  background: #fff;
+  box-sizing: border-box;
+}
+
+.split-beam-panel .form-input:focus {
+  border-color: #0066cc;
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.1);
+}
+
+.split-beam-panel .form-input:disabled {
+  background: #e9ecef;
+  cursor: not-allowed;
+}
+
+.split-beam-panel .btn-primary {
+  display: block;
+  width: 100%;
+  padding: 10px 16px;
+  background: #0066cc;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.split-beam-panel .btn-primary:hover {
+  background: #0052a3;
+}
+
+.split-beam-panel .btn-primary:disabled {
+  background: #ced4da;
+  cursor: not-allowed;
+}
+
+.split-beam-panel .radio-group label {
+  font-size: 13px;
+  color: #495057;
+}
+
+.split-beam-panel .radio-group input[type="radio"] {
+  accent-color: #0066cc;
+}
+
+/* ============================================
    Analysis Panel Styles
    ============================================ */
 

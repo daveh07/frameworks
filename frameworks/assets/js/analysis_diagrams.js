@@ -840,7 +840,7 @@ function createContinuousMomentCurve(startPos, endPos, L, w, M_left, M_right, op
         // Draw outline segment with matching color
         const segmentPoints = [curvePoints[i], curvePoints[i + 1]];
         const segmentGeometry = new THREE.BufferGeometry().setFromPoints(segmentPoints);
-        const segmentMaterial = new THREE.LineBasicMaterial({ color: fillColor, linewidth: 2 });
+        const segmentMaterial = new THREE.LineBasicMaterial({ color: fillColor, linewidth: 1 });
         group.add(new THREE.Line(segmentGeometry, segmentMaterial));
     }
     
@@ -1123,7 +1123,7 @@ function createContinuousShearCurve(startPos, endPos, L, w, M_left, M_right, opt
     
     // Main curve outline (dark green)
     const curveGeometry = new THREE.BufferGeometry().setFromPoints(curvePoints);
-    const curveMaterial = new THREE.LineBasicMaterial({ color: shearColor, linewidth: 2 });
+    const curveMaterial = new THREE.LineBasicMaterial({ color: shearColor, linewidth: 1 });
     group.add(new THREE.Line(curveGeometry, curveMaterial));
     
     // Labels at both ends

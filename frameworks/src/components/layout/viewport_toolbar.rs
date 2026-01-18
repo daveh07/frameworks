@@ -31,6 +31,7 @@ const ICON_ORBIT: &str = r#"<svg viewBox="0 0 24 24" stroke="currentColor" strok
 const ICON_PLAN: &str = r#"<svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" fill="none"><rect x="4" y="4" width="16" height="16" rx="1"/><circle cx="12" cy="12" r="2" fill="currentColor"/></svg>"#;
 const ICON_EXAMPLE: &str = r#"<svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" fill="none"><rect x="4" y="14" width="16" height="6" rx="1"/><rect x="6" y="8" width="12" height="6" rx="1"/><rect x="8" y="2" width="8" height="6" rx="1"/></svg>"#;
 const ICON_LOAD_CASES: &str = r#"<svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" fill="none"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/></svg>"#;
+const ICON_SPLIT_BEAM: &str = r#"<svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none"><line x1="4" y1="12" x2="10" y2="12"/><line x1="14" y1="12" x2="20" y2="12"/><circle cx="12" cy="12" r="2" fill="currentColor"/><line x1="12" y1="6" x2="12" y2="9" stroke-dasharray="2 1"/><line x1="12" y1="15" x2="12" y2="18" stroke-dasharray="2 1"/></svg>"#;
 
 #[component]
 pub fn ViewportToolbar(
@@ -44,6 +45,7 @@ pub fn ViewportToolbar(
     show_beam_properties: Signal<bool>,
     show_shell_properties: Signal<bool>,
     show_material_properties: Signal<bool>,
+    show_split_beam_panel: Signal<bool>,
 ) -> Element {
     let mut grid_visible = use_signal(|| true);
     let mut axes_visible = use_signal(|| true);
@@ -229,6 +231,7 @@ pub fn ViewportToolbar(
                                         show_beam_properties.set(false);
                                         show_shell_properties.set(false);
                                         show_material_properties.set(false);
+                                        show_split_beam_panel.set(false);
                                     }
                                     show_extrude_panel.set(opening);
                                 },
@@ -241,6 +244,28 @@ pub fn ViewportToolbar(
                                     eval("if (window.startCopyElements) window.startCopyElements();");
                                 },
                                 span { class: "btn-icon", dangerous_inner_html: ICON_COPY }
+                            }
+                            button {
+                                class: "tool-button-icon",
+                                title: "Split Beam",
+                                onclick: move |_| {
+                                    let opening = !show_split_beam_panel();
+                                    if opening {
+                                        show_extrude_panel.set(false);
+                                        show_constraints_panel.set(false);
+                                        show_point_load_panel.set(false);
+                                        show_distributed_load_panel.set(false);
+                                        show_pressure_load_panel.set(false);
+                                        show_analysis_panel.set(false);
+                                        show_mesh_panel.set(false);
+                                        show_beam_properties.set(false);
+                                        show_shell_properties.set(false);
+                                        show_material_properties.set(false);
+                                        show_split_beam_panel.set(false);
+                                    }
+                                    show_split_beam_panel.set(opening);
+                                },
+                                span { class: "btn-icon", dangerous_inner_html: ICON_SPLIT_BEAM }
                             }
                         }
                     }
@@ -266,6 +291,7 @@ pub fn ViewportToolbar(
                                         show_mesh_panel.set(false);
                                         show_shell_properties.set(false);
                                         show_material_properties.set(false);
+                                        show_split_beam_panel.set(false);
                                     }
                                     show_beam_properties.set(opening);
                                 },
@@ -286,6 +312,7 @@ pub fn ViewportToolbar(
                                         show_mesh_panel.set(false);
                                         show_beam_properties.set(false);
                                         show_material_properties.set(false);
+                                        show_split_beam_panel.set(false);
                                     }
                                     show_shell_properties.set(opening);
                                 },
@@ -363,6 +390,7 @@ pub fn ViewportToolbar(
                                         show_beam_properties.set(false);
                                         show_shell_properties.set(false);
                                         show_material_properties.set(false);
+                                        show_split_beam_panel.set(false);
                                     }
                                     show_point_load_panel.set(opening);
                                 },
@@ -383,6 +411,7 @@ pub fn ViewportToolbar(
                                         show_beam_properties.set(false);
                                         show_shell_properties.set(false);
                                         show_material_properties.set(false);
+                                        show_split_beam_panel.set(false);
                                     }
                                     show_distributed_load_panel.set(opening);
                                 },
@@ -403,6 +432,7 @@ pub fn ViewportToolbar(
                                         show_beam_properties.set(false);
                                         show_shell_properties.set(false);
                                         show_material_properties.set(false);
+                                        show_split_beam_panel.set(false);
                                     }
                                     show_pressure_load_panel.set(opening);
                                 },
@@ -440,6 +470,7 @@ pub fn ViewportToolbar(
                                         show_beam_properties.set(false);
                                         show_shell_properties.set(false);
                                         show_material_properties.set(false);
+                                        show_split_beam_panel.set(false);
                                     }
                                     show_analysis_panel.set(opening);
                                 },
@@ -469,6 +500,7 @@ pub fn ViewportToolbar(
                                         show_beam_properties.set(false);
                                         show_shell_properties.set(false);
                                         show_material_properties.set(false);
+                                        show_split_beam_panel.set(false);
                                     }
                                     show_constraints_panel.set(opening);
                                 },
@@ -489,6 +521,7 @@ pub fn ViewportToolbar(
                                         show_beam_properties.set(false);
                                         show_shell_properties.set(false);
                                         show_material_properties.set(false);
+                                        show_split_beam_panel.set(false);
                                     }
                                     show_mesh_panel.set(opening);
                                 },
