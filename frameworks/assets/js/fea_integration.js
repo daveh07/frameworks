@@ -2813,20 +2813,18 @@ window.showPlateStress = function(stressType = 'von_mises') {
     
     console.log(`Built node stress map with ${nodeStressMap.size} nodes`);
     
-    // Find min/max from node-averaged values for color scaling
-    let minStress = Infinity;
+    // Find max stress from node-averaged values for color scaling
+    // Always start from 0 (not minimum value) for consistent color mapping
+    let minStress = 0;
     let maxStress = -Infinity;
     nodeStressMap.forEach(value => {
-        if (value < minStress) minStress = value;
         if (value > maxStress) maxStress = value;
     });
     
-    // Handle edge case where all stresses are equal
-    if (minStress === maxStress) {
-        minStress -= 0.5;
-        maxStress += 0.5;
+    // Handle edge case where max is 0 or negative
+    if (maxStress <= 0) {
+        maxStress = 1;
     }
-    if (!isFinite(minStress)) minStress = 0;
     if (!isFinite(maxStress)) maxStress = 1;
     
     const stressRange = maxStress - minStress;
@@ -2840,17 +2838,18 @@ window.showPlateStress = function(stressType = 'von_mises') {
         const color = new THREE.Color();
 
         // High contrast, saturated FEA-style colormap (like ANSYS/Abaqus)
+        // Blue dominates 0-40%, gradient transitions 25%-85%, less extreme at ends
         // Format: { t: position 0-1, r/g/b: 0-255 sRGB values }
         const colorStops = [
-            { t: 0.00, r: 0,   g: 0,   b: 180 },  // Deep blue
-            { t: 0.15, r: 0,   g: 80,  b: 220 },  // Blue
-            { t: 0.30, r: 0,   g: 180, b: 200 },  // Cyan
-            { t: 0.45, r: 0,   g: 200, b: 80  },  // Cyan-green
-            { t: 0.55, r: 80,  g: 200, b: 0   },  // Green
-            { t: 0.65, r: 180, g: 200, b: 0   },  // Yellow-green
-            { t: 0.75, r: 255, g: 180, b: 0   },  // Yellow/Orange
-            { t: 0.85, r: 255, g: 80,  b: 0   },  // Orange
-            { t: 1.00, r: 200, g: 0,   b: 0   },  // Deep red
+            { t: 0.00, r: 30,  g: 60,  b: 180 },  // Blue (less extreme)
+            { t: 0.25, r: 30,  g: 60,  b: 180 },  // Hold blue through 25%
+            { t: 0.40, r: 0,   g: 120, b: 200 },  // Light blue
+            { t: 0.50, r: 0,   g: 180, b: 160 },  // Cyan/Teal
+            { t: 0.58, r: 40,  g: 190, b: 80  },  // Teal-green
+            { t: 0.64, r: 120, g: 190, b: 40  },  // Green-yellow
+            { t: 0.72, r: 200, g: 180, b: 30  },  // Yellow
+            { t: 0.82, r: 220, g: 120, b: 20  },  // Orange
+            { t: 1.00, r: 180, g: 40,  b: 40  },  // Red (less extreme)
         ];
         
         // Find the two color stops to interpolate between
@@ -3108,20 +3107,18 @@ function addStressLegend(stressType, minVal, maxVal) {
         existingLegend.remove();
     }
     
-    // Create HTML-based legend (more reliable than 3D sprite)
+    // Create HTML-based legend - clean, minimal style
     const legendDiv = document.createElement('div');
     legendDiv.id = 'stress-legend';
     legendDiv.style.cssText = `
         position: absolute;
         left: 12px;
         bottom: 12px;
-        background: rgba(255, 255, 255, 0.95);
-        border: 2px solid #333;
-        border-radius: 8px;
-        padding: 10px 15px;
+        background: rgba(30, 30, 30, 0.75);
+        border-radius: 4px;
+        padding: 8px 12px;
         z-index: 10;
         font-family: Arial, sans-serif;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.2);
         pointer-events: none;
     `;
     
@@ -3137,31 +3134,32 @@ function addStressLegend(stressType, minVal, maxVal) {
     };
     
     const title = document.createElement('div');
-    title.style.cssText = 'font-weight: bold; font-size: 14px; margin-bottom: 8px; text-align: center; color: #333;';
+    title.style.cssText = 'font-weight: 500; font-size: 12px; margin-bottom: 6px; text-align: center; color: #eee;';
     title.textContent = titleMap[stressType] || stressType;
     legendDiv.appendChild(title);
     
-    // Color bar - darker FEA colormap matching the contour plot
+    // Color bar - matching the exact contour plot colors
     const colorBar = document.createElement('div');
     colorBar.style.cssText = `
-        width: 150px;
-        height: 20px;
+        width: 140px;
+        height: 16px;
         background: linear-gradient(to right, 
-            rgb(30, 40, 160),
-            rgb(30, 120, 180),
-            rgb(30, 160, 130),
-            rgb(60, 160, 50),
-            rgb(160, 170, 30),
-            rgb(210, 120, 30),
-            rgb(180, 30, 30));
-        border: 1px solid #999;
+            rgb(30, 60, 180) 0%,
+            rgb(30, 60, 180) 25%,
+            rgb(0, 120, 200) 40%,
+            rgb(0, 180, 160) 50%,
+            rgb(40, 190, 80) 58%,
+            rgb(120, 190, 40) 64%,
+            rgb(200, 180, 30) 72%,
+            rgb(220, 120, 20) 82%,
+            rgb(180, 40, 40) 100%);
         border-radius: 2px;
     `;
     legendDiv.appendChild(colorBar);
     
     // Min/Max labels
     const labelsDiv = document.createElement('div');
-    labelsDiv.style.cssText = 'display: flex; justify-content: space-between; margin-top: 5px; font-size: 11px; color: #333;';
+    labelsDiv.style.cssText = 'display: flex; justify-content: space-between; margin-top: 4px; font-size: 10px; color: #ccc;';
     
     const minLabel = document.createElement('span');
     minLabel.textContent = formatStressValue(minVal);
