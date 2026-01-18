@@ -40,6 +40,10 @@ export let hoveredBeam = null;
 export let hoveredPlate = null;
 export let hoveredElement = null; // For mesh elements
 
+// Beam snap point state
+let currentSnapPoint = null; // { position: Vector3, type: 'midpoint'|'perpendicular', beam: beamMesh }
+let snapPointIndicator = null; // Visual indicator for snap point
+
 // Plate drawing state
 export let plateNodes = [];
 export let tempPlatePreview = null;
@@ -140,6 +144,7 @@ export function toggleDrawBeamMode(scene) {
             scene.remove(tempBeamLine);
             tempBeamLine = null;
         }
+        clearSnapIndicator(scene);
     }
     
     // Clear plate state
@@ -169,6 +174,7 @@ export function toggleDrawPlateMode(scene) {
         scene.remove(tempBeamLine);
         tempBeamLine = null;
     }
+    clearSnapIndicator(scene);
     
     // Clear plate state when toggling off
     if (!modes.drawPlate) {
@@ -201,6 +207,189 @@ function clearPlateDrawing(scene) {
     // Make sure draw mode flag is off
     modes.drawPlate = false;
     updateCursor();
+}
+
+/**
+ * Find snap points on beams (midpoint, perpendicular)
+ * @param {THREE.Raycaster} raycaster
+ * @param {THREE.Group} beamsGroup
+ * @param {THREE.Vector3|null} fromPosition - Position to calculate perpendicular from (optional)
+ * @param {number} snapRadius - Maximum distance to consider a snap
+ * @returns {Object|null} - { position: Vector3, type: string, beam: Mesh, t: number }
+ */
+function findBeamSnapPoint(raycaster, beamsGroup, fromPosition = null, snapRadius = 0.15) {
+    if (!beamsGroup || beamsGroup.children.length === 0) return null;
+    
+    const snapPoints = [];
+    
+    beamsGroup.children.forEach(beam => {
+        if (!beam.userData.startNode || !beam.userData.endNode) return;
+        
+        const startPos = beam.userData.startNode.position.clone();
+        const endPos = beam.userData.endNode.position.clone();
+        const beamDir = new THREE.Vector3().subVectors(endPos, startPos);
+        const beamLength = beamDir.length();
+        beamDir.normalize();
+        
+        // 1. Midpoint snap
+        const midpoint = new THREE.Vector3().addVectors(startPos, endPos).multiplyScalar(0.5);
+        
+        // Check if raycaster is near midpoint
+        const rayOrigin = raycaster.ray.origin.clone();
+        const rayDir = raycaster.ray.direction.clone();
+        
+        // Project midpoint onto ray to find closest point
+        const toMidpoint = new THREE.Vector3().subVectors(midpoint, rayOrigin);
+        const projLength = toMidpoint.dot(rayDir);
+        const closestOnRay = rayOrigin.clone().add(rayDir.clone().multiplyScalar(projLength));
+        const midpointDist = closestOnRay.distanceTo(midpoint);
+        
+        if (midpointDist < snapRadius) {
+            snapPoints.push({
+                position: midpoint,
+                type: 'midpoint',
+                beam: beam,
+                t: 0.5,
+                distance: midpointDist
+            });
+        }
+        
+        // 2. Perpendicular snap (if we have a starting position)
+        if (fromPosition) {
+            // Find the closest point on beam to the line from fromPosition perpendicular to beam
+            const fromToStart = new THREE.Vector3().subVectors(startPos, fromPosition);
+            const projOnBeam = fromToStart.dot(beamDir);
+            const t = -projOnBeam / beamLength;
+            
+            // Only consider points along the beam (not at nodes - those are handled by node snap)
+            if (t > 0.05 && t < 0.95) {
+                const perpPoint = startPos.clone().add(beamDir.clone().multiplyScalar(t * beamLength));
+                
+                // Check if the perpendicular point is near the ray
+                const toPerpPoint = new THREE.Vector3().subVectors(perpPoint, rayOrigin);
+                const perpProjLength = toPerpPoint.dot(rayDir);
+                const closestOnRayPerp = rayOrigin.clone().add(rayDir.clone().multiplyScalar(perpProjLength));
+                const perpDist = closestOnRayPerp.distanceTo(perpPoint);
+                
+                if (perpDist < snapRadius) {
+                    // Verify it's actually perpendicular (angle check)
+                    const fromToPerpVec = new THREE.Vector3().subVectors(perpPoint, fromPosition).normalize();
+                    const dotProduct = Math.abs(fromToPerpVec.dot(beamDir));
+                    
+                    // If nearly perpendicular (dot product close to 0)
+                    if (dotProduct < 0.1) {
+                        snapPoints.push({
+                            position: perpPoint,
+                            type: 'perpendicular',
+                            beam: beam,
+                            t: t,
+                            distance: perpDist
+                        });
+                    }
+                }
+            }
+        }
+        
+        // 3. General intersection with beam (closest point on beam to ray)
+        // This allows splitting at any point along the beam
+        const w0 = new THREE.Vector3().subVectors(rayOrigin, startPos);
+        const a = rayDir.dot(rayDir);
+        const b = rayDir.dot(beamDir);
+        const c = beamDir.dot(beamDir);
+        const d = rayDir.dot(w0);
+        const e = beamDir.dot(w0);
+        
+        const denom = a * c - b * b;
+        if (Math.abs(denom) > 0.0001) {
+            const sc = (b * e - c * d) / denom;
+            const tc = (a * e - b * d) / denom;
+            
+            // tc is parameter along beam (0 = start, beamLength = end)
+            const t = tc / beamLength;
+            
+            // Only consider points along the beam (not at nodes)
+            if (t > 0.05 && t < 0.95) {
+                const pointOnBeam = startPos.clone().add(beamDir.clone().multiplyScalar(tc));
+                const pointOnRay = rayOrigin.clone().add(rayDir.clone().multiplyScalar(sc));
+                const dist = pointOnBeam.distanceTo(pointOnRay);
+                
+                if (dist < snapRadius * 0.7) { // Tighter radius for general intersection
+                    snapPoints.push({
+                        position: pointOnBeam,
+                        type: 'intersection',
+                        beam: beam,
+                        t: t,
+                        distance: dist
+                    });
+                }
+            }
+        }
+    });
+    
+    // Return the closest snap point, prioritizing midpoint and perpendicular
+    if (snapPoints.length === 0) return null;
+    
+    // Sort by type priority then distance
+    snapPoints.sort((a, b) => {
+        const typePriority = { 'midpoint': 0, 'perpendicular': 1, 'intersection': 2 };
+        const priorityDiff = typePriority[a.type] - typePriority[b.type];
+        if (priorityDiff !== 0) return priorityDiff;
+        return a.distance - b.distance;
+    });
+    
+    return snapPoints[0];
+}
+
+/**
+ * Create or update snap point indicator
+ * @param {THREE.Scene} scene
+ * @param {Object} snapPoint - { position, type }
+ */
+function updateSnapIndicator(scene, snapPoint) {
+    // Remove existing indicator
+    if (snapPointIndicator) {
+        scene.remove(snapPointIndicator);
+        if (snapPointIndicator.geometry) snapPointIndicator.geometry.dispose();
+        if (snapPointIndicator.material) snapPointIndicator.material.dispose();
+        snapPointIndicator = null;
+    }
+    
+    if (!snapPoint) return;
+    
+    // Create indicator based on snap type
+    let geometry, material;
+    
+    if (snapPoint.type === 'midpoint') {
+        // Diamond shape for midpoint
+        geometry = new THREE.OctahedronGeometry(0.08);
+        material = new THREE.MeshBasicMaterial({ color: 0xffff00 }); // Yellow
+    } else if (snapPoint.type === 'perpendicular') {
+        // Box/cube for perpendicular
+        geometry = new THREE.BoxGeometry(0.1, 0.1, 0.1);
+        material = new THREE.MeshBasicMaterial({ color: 0x00ffff }); // Cyan
+    } else {
+        // Sphere for general intersection
+        geometry = new THREE.SphereGeometry(0.06, 8, 8);
+        material = new THREE.MeshBasicMaterial({ color: 0xff8800 }); // Orange
+    }
+    
+    snapPointIndicator = new THREE.Mesh(geometry, material);
+    snapPointIndicator.position.copy(snapPoint.position);
+    scene.add(snapPointIndicator);
+}
+
+/**
+ * Clear snap indicator
+ * @param {THREE.Scene} scene
+ */
+function clearSnapIndicator(scene) {
+    if (snapPointIndicator) {
+        scene.remove(snapPointIndicator);
+        if (snapPointIndicator.geometry) snapPointIndicator.geometry.dispose();
+        if (snapPointIndicator.material) snapPointIndicator.material.dispose();
+        snapPointIndicator = null;
+    }
+    currentSnapPoint = null;
 }
 
 /**
@@ -516,31 +705,50 @@ export function handleSelectModeMove(sceneData) {
  * @param {Object} sceneData
  */
 export function handleDrawBeamModeMove(sceneData) {
-    const { raycaster, mouse, camera, nodesGroup, hoverHighlight, scene, canvas } = sceneData;
+    const { raycaster, mouse, camera, nodesGroup, beamsGroup, hoverHighlight, scene, canvas } = sceneData;
     
     raycaster.setFromCamera(mouse, camera);
     
     const closestNode = handleNodeHover(raycaster, nodesGroup, hoverHighlight, canvas);
     
-    // Show temporary line from first node to hovered node
-    if (firstBeamNode && closestNode && closestNode !== firstBeamNode) {
+    // Check for snap points on beams (when we have a first node selected)
+    let snapPoint = null;
+    if (!closestNode && firstBeamNode) {
+        // Look for beam snap points with perpendicular detection from first node
+        snapPoint = findBeamSnapPoint(raycaster, beamsGroup, firstBeamNode.position);
+        currentSnapPoint = snapPoint;
+        updateSnapIndicator(scene, snapPoint);
+    } else if (!closestNode && !firstBeamNode) {
+        // Just looking for midpoints to snap to as first node
+        snapPoint = findBeamSnapPoint(raycaster, beamsGroup, null);
+        currentSnapPoint = snapPoint;
+        updateSnapIndicator(scene, snapPoint);
+    } else {
+        // We have a node hovered, clear snap indicator
+        clearSnapIndicator(scene);
+    }
+    
+    // Show temporary line from first node to hovered target
+    const targetPosition = closestNode ? closestNode.position : (snapPoint ? snapPoint.position : null);
+    
+    if (firstBeamNode && targetPosition) {
         // Remove old temp line
         if (tempBeamLine) {
             scene.remove(tempBeamLine);
         }
         
         // Create new temp line
-        const points = [firstBeamNode.position, closestNode.position];
+        const points = [firstBeamNode.position, targetPosition];
         const geometry = new THREE.BufferGeometry().setFromPoints(points);
         const material = new THREE.LineBasicMaterial({ 
-            color: 0x00FF00,
+            color: snapPoint ? (snapPoint.type === 'perpendicular' ? 0x00ffff : 0xffff00) : 0x00FF00,
             linewidth: 10,
             transparent: false,
             opacity: 0.6
         });
         tempBeamLine = new THREE.Line(geometry, material);
         scene.add(tempBeamLine);
-    } else if (!closestNode && tempBeamLine) {
+    } else if (!targetPosition && tempBeamLine) {
         scene.remove(tempBeamLine);
         tempBeamLine = null;
     }
@@ -1138,8 +1346,9 @@ export function handleSelectClick() {
  * @param {Object} sceneData
  */
 export function handleDrawBeamClick(sceneData) {
-    const { scene, beamsGroup } = sceneData;
+    const { scene, beamsGroup, nodesGroup } = sceneData;
     
+    // Handle clicking on a node
     if (hoveredNode) {
         if (!firstBeamNode) {
             // First click: select start node
@@ -1167,10 +1376,123 @@ export function handleDrawBeamClick(sceneData) {
                 scene.remove(tempBeamLine);
                 tempBeamLine = null;
             }
+            clearSnapIndicator(scene);
         } else {
             console.log('Cannot create beam to same node');
         }
     }
+    // Handle clicking on a snap point (beam intersection)
+    else if (currentSnapPoint) {
+        const snapPoint = currentSnapPoint;
+        
+        if (!firstBeamNode) {
+            // First click on snap point: create a node at the snap location and split the beam
+            const newNode = createNodeAndSplitBeam(sceneData, snapPoint);
+            if (newNode) {
+                firstBeamNode = newNode;
+                firstBeamNode.material.color.setHex(0xff8800);
+                console.log(`First node created at ${snapPoint.type} snap point`);
+            }
+        } else {
+            // Second click on snap point: create node, split beam, then create beam to it
+            const newNode = createNodeAndSplitBeam(sceneData, snapPoint);
+            if (newNode) {
+                const startPos = firstBeamNode.position.clone();
+                const endPos = newNode.position.clone();
+                
+                // Check if beam already exists
+                const existingBeam = findBeamBetweenPositions(beamsGroup, startPos, endPos);
+                if (existingBeam) {
+                    console.log('Beam already exists between these nodes');
+                } else {
+                    createBeam(beamsGroup, startPos, endPos, firstBeamNode, newNode);
+                }
+                
+                // Reset state
+                firstBeamNode.material.color.setHex(firstBeamNode.userData.originalColor);
+                firstBeamNode = null;
+                
+                if (tempBeamLine) {
+                    scene.remove(tempBeamLine);
+                    tempBeamLine = null;
+                }
+            }
+        }
+        clearSnapIndicator(scene);
+    }
+}
+
+/**
+ * Create a node at snap point and split the intersected beam
+ * @param {Object} sceneData
+ * @param {Object} snapPoint - { position, type, beam, t }
+ * @returns {THREE.Mesh|null} - The new node at the snap point
+ */
+function createNodeAndSplitBeam(sceneData, snapPoint) {
+    const { nodesGroup, beamsGroup, scene } = sceneData;
+    const beam = snapPoint.beam;
+    
+    if (!beam || !beam.userData.startNode || !beam.userData.endNode) {
+        console.error('Invalid beam for splitting');
+        return null;
+    }
+    
+    const startNode = beam.userData.startNode;
+    const endNode = beam.userData.endNode;
+    const startPos = startNode.position.clone();
+    const endPos = endNode.position.clone();
+    
+    // Get beam properties to copy
+    const beamUserData = beam.userData || {};
+    const rotation = beamUserData.rotation || 0;
+    const section = beamUserData.section || { width: 0.3, height: 0.5 };
+    const releases = beamUserData.releases || {};
+    
+    console.log(`Creating node at ${snapPoint.type} point and splitting beam`);
+    
+    // Create the new node at snap position
+    const newNode = createNode(nodesGroup, snapPoint.position.clone(), false);
+    if (!newNode) {
+        console.error('Failed to create node at snap point');
+        return null;
+    }
+    
+    // Remove the original beam
+    beamsGroup.remove(beam);
+    if (beam.geometry) beam.geometry.dispose();
+    if (beam.material) beam.material.dispose();
+    
+    // Create two new beams: start->newNode and newNode->end
+    const beam1 = createBeam(beamsGroup, startPos, snapPoint.position.clone(), startNode, newNode, true);
+    const beam2 = createBeam(beamsGroup, snapPoint.position.clone(), endPos, newNode, endNode, true);
+    
+    if (beam1) {
+        beam1.userData.rotation = rotation;
+        beam1.userData.section = section;
+        // Apply start releases to first beam's i-node
+        if (releases.i_node_ry !== undefined) {
+            beam1.userData.releases.i_node_ry = releases.i_node_ry;
+            beam1.userData.releases.i_node_rz = releases.i_node_rz;
+        }
+    }
+    
+    if (beam2) {
+        beam2.userData.rotation = rotation;
+        beam2.userData.section = section;
+        // Apply end releases to second beam's j-node
+        if (releases.j_node_ry !== undefined) {
+            beam2.userData.releases.j_node_ry = releases.j_node_ry;
+            beam2.userData.releases.j_node_rz = releases.j_node_rz;
+        }
+    }
+    
+    // Update labels
+    updateNodeLabels(nodesGroup);
+    updateBeamLabels(beamsGroup);
+    
+    console.log(`Split complete: created node and 2 new beams at ${snapPoint.type} point`);
+    
+    return newNode;
 }
 
 /**
