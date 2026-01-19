@@ -1055,9 +1055,14 @@ impl FEModel {
                 }
             }
             
-            // Note: We no longer need to zero out forces at released DOFs
-            // because the condensed stiffness and condensed FER already account for releases.
-            // The forces at released DOFs should naturally be zero from the condensation.
+            // Explicitly zero out forces at released DOFs
+            // While static condensation should theoretically do this, we enforce it
+            // to ensure numerical precision and correct moment diagrams at hinges/pins
+            for (i, &released) in releases.iter().enumerate() {
+                if released {
+                    f_local[i] = 0.0;
+                }
+            }
             
             // Store results
             let mut forces = [0.0; 12];

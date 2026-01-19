@@ -250,6 +250,67 @@ function getSupportTypeAtPosition(pos, tol = 0.15) {
 }
 
 /**
+ * Check if a beam end has moment releases (is pinned/hinged at that end)
+ * Returns true if the beam end cannot carry moment (i.e., is released/hinged)
+ * 
+ * @param {Object} beam - The beam mesh object
+ * @param {string} end - 'i' for start node (i-node) or 'j' for end node (j-node)
+ * @returns {boolean} - true if moment is released at this end
+ */
+function hasBeamEndMomentRelease(beam, end) {
+    const releases = beam.userData?.releases;
+    if (!releases) {
+        return false; // No releases = fully fixed
+    }
+    
+    if (end === 'i') {
+        // Check i-node moment releases (My or Mz released means pinned behavior)
+        return releases.i_node_ry === true || releases.i_node_rz === true;
+    } else {
+        // Check j-node moment releases
+        return releases.j_node_ry === true || releases.j_node_rz === true;
+    }
+}
+
+/**
+ * Get effective moment condition at chain endpoint considering both support AND member releases
+ * A beam end is 'pinned' (zero moment) if:
+ *   - The support is pinned, OR
+ *   - The member end has moment releases (hinges)
+ * A beam end is 'fixed' (can carry moment) only if:
+ *   - The support is fixed AND the member end has no moment releases
+ * 
+ * @param {THREE.Vector3} pos - Position to check
+ * @param {Object} beam - The beam mesh at this end of the chain  
+ * @param {string} beamEnd - 'i' or 'j' indicating which end of the beam
+ * @returns {string} - 'fixed', 'pinned', or 'free'
+ */
+function getEffectiveMomentCondition(pos, beam, beamEnd) {
+    // First get the support type at this position
+    const supportType = getSupportTypeAtPosition(pos);
+    
+    // If no support, it's free (cantilever tip)
+    if (supportType === 'free') {
+        return 'free';
+    }
+    
+    // If support is pinned, moment is always zero regardless of member releases
+    if (supportType === 'pinned') {
+        return 'pinned';
+    }
+    
+    // Support is fixed - now check member releases
+    // If the beam end has moment releases, it acts as pinned even at a fixed support
+    if (hasBeamEndMomentRelease(beam, beamEnd)) {
+        console.log(`Beam end ${beamEnd} has moment release at fixed support - treating as pinned`);
+        return 'pinned';
+    }
+    
+    // Fixed support with no member releases = can carry moment
+    return 'fixed';
+}
+
+/**
  * Show bending moment diagram
  * Handles continuous beams with actual support boundary conditions
  */
@@ -331,11 +392,23 @@ export function showBendingMomentDiagram() {
             }
         });
         
-        // Get support types at chain endpoints
-        const leftSupport = getSupportTypeAtPosition(spans[0].startPos);
-        const rightSupport = getSupportTypeAtPosition(spans[spans.length - 1].endPos);
+        // Get support types at chain endpoints, considering member releases
+        // The first span's start is the left end, the last span's end is the right end
+        const firstSpanInfo = chain[0];
+        const lastSpanInfo = chain[chain.length - 1];
+        const firstBeam = beamsGroup.children[firstSpanInfo.idx];
+        const lastBeam = beamsGroup.children[lastSpanInfo.idx];
         
-        console.log('Support types: left =', leftSupport, ', right =', rightSupport);
+        // Determine which beam end corresponds to which chain end
+        // If a span is reversed, the i/j ends are swapped
+        const leftBeamEnd = firstSpanInfo.reversed ? 'j' : 'i';  // Left chain end = i-node unless reversed
+        const rightBeamEnd = lastSpanInfo.reversed ? 'i' : 'j'; // Right chain end = j-node unless reversed
+        
+        // Get effective moment condition (considers both support AND member releases)
+        const leftSupport = getEffectiveMomentCondition(spans[0].startPos, firstBeam, leftBeamEnd);
+        const rightSupport = getEffectiveMomentCondition(spans[spans.length - 1].endPos, lastBeam, rightBeamEnd);
+        
+        console.log('Effective moment conditions: left =', leftSupport, ', right =', rightSupport);
         console.log('Chain plane direction:', chainPlaneDir.x.toFixed(2), chainPlaneDir.y.toFixed(2), chainPlaneDir.z.toFixed(2));
         
         // Calculate moments based on support conditions
