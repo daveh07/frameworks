@@ -563,6 +563,10 @@ window.extractFEAStructure = function(materialConfig, beamSectionConfig) {
         });
     }
 
+    // Track which FEA plates have received loads to prevent double-counting
+    // This can happen when both parent plate AND mesh element are selected
+    const loadedPlates = new Set();
+
     // Extract plate loads from elementLoads Map (mesh element pressure loads)
     let elementLoadCount = 0;
     if (window.elementLoads && window.elementLoads.size > 0) {
@@ -572,6 +576,11 @@ window.extractFEAStructure = function(materialConfig, beamSectionConfig) {
             
             loads.forEach(load => {
                 if (load.type === 'pressure_element') {
+                    // Create unique key for this plate + load case combination
+                    const loadKey = `${plateName}_${load.magnitude}`;
+                    if (loadedPlates.has(loadKey)) return; // Skip if already loaded
+                    loadedPlates.add(loadKey);
+                    
                     const pressure_Pa = load.magnitude * 1000;
                     model.plate_loads.push({
                         plate: plateName,
@@ -597,6 +606,11 @@ window.extractFEAStructure = function(materialConfig, beamSectionConfig) {
                 // This is a mesh element UUID - apply load directly
                 loads.forEach(load => {
                     if (load.type === 'pressure') {
+                        // Create unique key for this plate + load case combination
+                        const loadKey = `${directPlateName}_${load.magnitude}`;
+                        if (loadedPlates.has(loadKey)) return; // Skip if already loaded
+                        loadedPlates.add(loadKey);
+                        
                         const pressure_Pa = load.magnitude * 1000;
                         model.plate_loads.push({
                             plate: directPlateName,
@@ -622,6 +636,11 @@ window.extractFEAStructure = function(materialConfig, beamSectionConfig) {
                     if (plateName) {
                         loads.forEach(load => {
                             if (load.type === 'pressure') {
+                                // Create unique key for this plate + load case combination
+                                const loadKey = `${plateName}_${load.magnitude}`;
+                                if (loadedPlates.has(loadKey)) return; // Skip if already loaded
+                                loadedPlates.add(loadKey);
+                                
                                 const pressure_Pa = load.magnitude * 1000;
                                 model.plate_loads.push({
                                     plate: plateName,
@@ -639,6 +658,11 @@ window.extractFEAStructure = function(materialConfig, beamSectionConfig) {
                 if (plateName) {
                     loads.forEach(load => {
                         if (load.type === 'pressure') {
+                            // Create unique key for this plate + load case combination
+                            const loadKey = `${plateName}_${load.magnitude}`;
+                            if (loadedPlates.has(loadKey)) return; // Skip if already loaded
+                            loadedPlates.add(loadKey);
+                            
                             const pressure_Pa = load.magnitude * 1000;
                             model.plate_loads.push({
                                 plate: plateName,
@@ -2832,24 +2856,29 @@ window.showPlateStress = function(stressType = 'von_mises') {
     console.log(`Plate ${stressType} stress range: ${minStress.toExponential(2)} to ${maxStress.toExponential(2)}`);
     
     // Color function using rainbow/jet colormap matching commercial FEA style
-    // Blue -> Cyan -> Green -> Yellow -> Orange -> Red with darker, richer tones
+    // Blue -> Cyan -> Green -> Yellow -> Orange -> Red with smooth transitions
     function getStressColor(value) {
         const t = Math.max(0, Math.min(1, (value - minStress) / stressRange));
         const color = new THREE.Color();
 
-        // High contrast, saturated FEA-style colormap (like ANSYS/Abaqus)
-        // Blue dominates 0-40%, gradient transitions 25%-85%, less extreme at ends
+        // Balanced FEA-style colormap with more blue-cyan-teal gradation
+        // Spreads out blue/cyan range more evenly, similar to ANSYS/CalculiX
         // Format: { t: position 0-1, r/g/b: 0-255 sRGB values }
         const colorStops = [
-            { t: 0.00, r: 30,  g: 60,  b: 180 },  // Blue (less extreme)
-            { t: 0.25, r: 30,  g: 60,  b: 180 },  // Hold blue through 25%
-            { t: 0.40, r: 0,   g: 120, b: 200 },  // Light blue
-            { t: 0.50, r: 0,   g: 180, b: 160 },  // Cyan/Teal
-            { t: 0.58, r: 40,  g: 190, b: 80  },  // Teal-green
-            { t: 0.64, r: 120, g: 190, b: 40  },  // Green-yellow
-            { t: 0.72, r: 200, g: 180, b: 30  },  // Yellow
-            { t: 0.82, r: 220, g: 120, b: 20  },  // Orange
-            { t: 1.00, r: 180, g: 40,  b: 40  },  // Red (less extreme)
+            { t: 0.00, r: 0,   g: 0,   b: 180 },  // Deep blue
+            { t: 0.08, r: 0,   g: 40,  b: 200 },  // Blue
+            { t: 0.16, r: 0,   g: 80,  b: 220 },  // Lighter blue
+            { t: 0.24, r: 0,   g: 120, b: 220 },  // Blue-cyan
+            { t: 0.32, r: 0,   g: 160, b: 200 },  // Cyan-blue
+            { t: 0.40, r: 0,   g: 190, b: 170 },  // Cyan
+            { t: 0.48, r: 0,   g: 200, b: 120 },  // Cyan-teal
+            { t: 0.56, r: 40,  g: 200, b: 60  },  // Teal-green
+            { t: 0.64, r: 100, g: 200, b: 30  },  // Green
+            { t: 0.72, r: 170, g: 200, b: 0   },  // Green-yellow
+            { t: 0.80, r: 220, g: 180, b: 0   },  // Yellow
+            { t: 0.88, r: 240, g: 120, b: 0   },  // Orange
+            { t: 0.96, r: 220, g: 60,  b: 20  },  // Red-orange
+            { t: 1.00, r: 180, g: 0,   b: 0   },  // Red
         ];
         
         // Find the two color stops to interpolate between
@@ -3138,21 +3167,26 @@ function addStressLegend(stressType, minVal, maxVal) {
     title.textContent = titleMap[stressType] || stressType;
     legendDiv.appendChild(title);
     
-    // Color bar - matching the exact contour plot colors
+    // Color bar - matching the exact contour plot colors (balanced blue-cyan-teal-green-yellow-red)
     const colorBar = document.createElement('div');
     colorBar.style.cssText = `
         width: 140px;
         height: 16px;
         background: linear-gradient(to right, 
-            rgb(30, 60, 180) 0%,
-            rgb(30, 60, 180) 25%,
-            rgb(0, 120, 200) 40%,
-            rgb(0, 180, 160) 50%,
-            rgb(40, 190, 80) 58%,
-            rgb(120, 190, 40) 64%,
-            rgb(200, 180, 30) 72%,
-            rgb(220, 120, 20) 82%,
-            rgb(180, 40, 40) 100%);
+            rgb(0, 0, 180) 0%,
+            rgb(0, 40, 200) 8%,
+            rgb(0, 80, 220) 16%,
+            rgb(0, 120, 220) 24%,
+            rgb(0, 160, 200) 32%,
+            rgb(0, 190, 170) 40%,
+            rgb(0, 200, 120) 48%,
+            rgb(40, 200, 60) 56%,
+            rgb(100, 200, 30) 64%,
+            rgb(170, 200, 0) 72%,
+            rgb(220, 180, 0) 80%,
+            rgb(240, 120, 0) 88%,
+            rgb(220, 60, 20) 96%,
+            rgb(180, 0, 0) 100%);
         border-radius: 2px;
     `;
     legendDiv.appendChild(colorBar);
