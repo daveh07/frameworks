@@ -362,7 +362,7 @@ function updateSnapIndicator(scene, snapPoint) {
     if (snapPoint.type === 'midpoint') {
         // Diamond shape for midpoint
         geometry = new THREE.OctahedronGeometry(0.08);
-        material = new THREE.MeshBasicMaterial({ color: 0xffff00 }); // Yellow
+        material = new THREE.MeshBasicMaterial({ color: 0xf54254 }); // Red
     } else if (snapPoint.type === 'perpendicular') {
         // Box/cube for perpendicular
         geometry = new THREE.BoxGeometry(0.1, 0.1, 0.1);
@@ -741,7 +741,7 @@ export function handleDrawBeamModeMove(sceneData) {
         const points = [firstBeamNode.position, targetPosition];
         const geometry = new THREE.BufferGeometry().setFromPoints(points);
         const material = new THREE.LineBasicMaterial({ 
-            color: snapPoint ? (snapPoint.type === 'perpendicular' ? 0x00ffff : 0xffff00) : 0x00FF00,
+            color: snapPoint ? (snapPoint.type === 'perpendicular' ? 0x00ffff : 0xf54254) : 0x00FF00,
             linewidth: 10,
             transparent: false,
             opacity: 0.6
@@ -1301,6 +1301,21 @@ export function handleSelectClick() {
             if (typeof notifyBeamSelectedForSplit === 'function') {
                 notifyBeamSelectedForSplit();
             }
+            // Dispatch beam-selected event with full beam data including releases
+            const startNode = beam.userData.startNode;
+            const endNode = beam.userData.endNode;
+            const releases = beam.userData.releases || { i_node_ry: false, i_node_rz: false, j_node_ry: false, j_node_rz: false };
+            const length = startNode && endNode ? startNode.position.distanceTo(endNode.position) : 0;
+            window.dispatchEvent(new CustomEvent('beam-selected', { 
+                detail: { 
+                    id: beam.userData.id || beam.uuid,
+                    name: beam.userData.memberName || `Beam_${beam.userData.id || beam.uuid.slice(0, 6)}`,
+                    length: length,
+                    startNodeId: startNode ? (startNode.userData.id || startNode.uuid) : null,
+                    endNodeId: endNode ? (endNode.userData.id || endNode.uuid) : null,
+                    releases: releases
+                } 
+            }));
         }
         console.log(`${selectedBeams.size} beam(s) selected`);
     }

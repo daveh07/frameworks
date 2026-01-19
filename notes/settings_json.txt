@@ -1,0 +1,20 @@
+{
+    "github.copilot.nextEditSuggestions.enabled": true,
+    "workbench.colorTheme": "Tokyo Night Blackout",
+
+    "workbench.colorCustomizations": {
+        "editor.foreground": "#15eee3",
+    },
+    "editor.tokenColorCustomizations": {
+    "textMateRules": [
+            {
+                "name": "The Blue Color I Picked",
+                "scope": ["string"
+                ],
+                "settings": {
+                    "foreground": "#2af7ca", // change this COLOR
+                }            
+            }
+        ]
+    }   
+}
