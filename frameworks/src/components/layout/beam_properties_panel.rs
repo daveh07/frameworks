@@ -230,7 +230,38 @@ pub fn BeamPropertiesPanel(
         });
     }
     
-    // Function to apply releases to selected beams
+    // Auto-apply releases whenever any release value changes
+    use_effect(move || {
+        // Skip initial render or when no beam is selected
+        if selected_beam_name().is_empty() {
+            return;
+        }
+        
+        #[cfg(target_arch = "wasm32")]
+        {
+            use wasm_bindgen::prelude::*;
+            use web_sys::window;
+            
+            if let Some(win) = window() {
+                let func = js_sys::Reflect::get(&win, &JsValue::from_str("setSelectedBeamReleases"));
+                if let Ok(f) = func {
+                    if f.is_function() {
+                        let js_releases = serde_wasm_bindgen::to_value(&serde_json::json!({
+                            "i_node_ry": i_my(),
+                            "i_node_rz": i_mz(),
+                            "j_node_ry": j_my(),
+                            "j_node_rz": j_mz(),
+                        })).unwrap_or(JsValue::NULL);
+                        
+                        let func: js_sys::Function = f.unchecked_into();
+                        let _ = func.call1(&JsValue::NULL, &js_releases);
+                    }
+                }
+            }
+        }
+    });
+    
+    // Function to apply releases to selected beams (for manual apply button)
     let apply_releases = move |_| {
         #[cfg(target_arch = "wasm32")]
         {

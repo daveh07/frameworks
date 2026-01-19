@@ -1025,23 +1025,55 @@ export async function init_three_canvas(canvas) {
     window.toggleReleasesVisibility = (visible) => {
         window.releaseIndicatorsVisible = visible;
         if (sceneData && sceneData.releaseIndicatorsGroup) {
+            // When turning on, update/create all indicators first
+            if (visible && window.updateAllReleaseIndicators) {
+                window.updateAllReleaseIndicators();
+            }
             sceneData.releaseIndicatorsGroup.visible = visible;
         }
         console.log(`Release indicators visibility: ${visible}`);
     };
     
-    // Create a circle geometry for pinned release indicator
+    // Create a circle outline for pinned/hinged release indicator
+    // This creates a clean hollow circle like in professional engineering software
     const createPinnedReleaseIndicator = () => {
-        // Create a ring (torus) to represent pinned release (○)
-        const geometry = new THREE.TorusGeometry(0.12, 0.025, 8, 16);
-        const material = new THREE.MeshBasicMaterial({ 
-            color: 0x00ffff,  // Cyan for visibility
+        const group = new THREE.Group();
+        
+        // Create circle outline using LineLoop for crisp edges
+        const radius = 0.08;
+        const segments = 24;
+        const circlePoints = [];
+        
+        for (let i = 0; i <= segments; i++) {
+            const theta = (i / segments) * Math.PI * 2;
+            circlePoints.push(new THREE.Vector3(
+                radius * Math.cos(theta),
+                radius * Math.sin(theta),
+                0
+            ));
+        }
+        
+        const circleGeometry = new THREE.BufferGeometry().setFromPoints(circlePoints);
+        const circleMaterial = new THREE.LineBasicMaterial({ 
+            color: 0x1976d2,  // Professional blue
+            linewidth: 2
+        });
+        const circle = new THREE.LineLoop(circleGeometry, circleMaterial);
+        group.add(circle);
+        
+        // Add a small filled center dot for better visibility
+        const dotGeometry = new THREE.CircleGeometry(radius * 0.2, 12);
+        const dotMaterial = new THREE.MeshBasicMaterial({ 
+            color: 0x1976d2,
             side: THREE.DoubleSide
         });
-        return new THREE.Mesh(geometry, material);
+        const dot = new THREE.Mesh(dotGeometry, dotMaterial);
+        group.add(dot);
+        
+        return group;
     };
     
-    // Create an X shape for fixed release indicator
+    // Create an X shape for fixed (no release) indicator - not typically shown
     const createFixedReleaseIndicator = () => {
         const group = new THREE.Group();
         
@@ -1097,21 +1129,48 @@ export async function init_three_canvas(canvas) {
         const iNodeReleased = releases.i_node_ry || releases.i_node_rz;
         const jNodeReleased = releases.j_node_ry || releases.j_node_rz;
         
-        // Get beam endpoints
-        const positions = beam.geometry.attributes.position;
-        const iNode = new THREE.Vector3(positions.getX(0), positions.getY(0), positions.getZ(0));
-        const jNode = new THREE.Vector3(positions.getX(1), positions.getY(1), positions.getZ(1));
+        console.log(`Beam ${beam.userData.id || beam.uuid}: releases =`, releases, 'i_released:', iNodeReleased, 'j_released:', jNodeReleased);
         
-        // Calculate beam direction for offset
+        // If no releases, nothing to show
+        if (!iNodeReleased && !jNodeReleased) {
+            return;
+        }
+        
+        // Get beam endpoints from userData node references
+        let iNode, jNode;
+        if (beam.userData.startNode && beam.userData.endNode) {
+            iNode = beam.userData.startNode.position.clone();
+            jNode = beam.userData.endNode.position.clone();
+        } else if (beam.geometry && beam.geometry.attributes.position) {
+            // Fallback to geometry positions
+            const positions = beam.geometry.attributes.position;
+            iNode = new THREE.Vector3(positions.getX(0), positions.getY(0), positions.getZ(0));
+            jNode = new THREE.Vector3(positions.getX(1), positions.getY(1), positions.getZ(1));
+        } else {
+            console.warn('Cannot determine beam endpoints for', beam);
+            return; // Cannot determine endpoints
+        }
+        
+        console.log('Creating release indicators at iNode:', iNode, 'jNode:', jNode);
+        
+        // Calculate beam direction for offset and orientation
         const beamDir = new THREE.Vector3().subVectors(jNode, iNode).normalize();
-        const offsetDistance = 0.25; // Offset from node along beam
+        const beamLength = iNode.distanceTo(jNode);
+        
+        // Offset from node along beam - position near the end but visible
+        const offsetDistance = Math.min(0.15, beamLength * 0.08);
         
         // Create i-node indicator (circle for pinned/released)
         if (iNodeReleased) {
             const indicator = createPinnedReleaseIndicator();
             indicator.position.copy(iNode).addScaledVector(beamDir, offsetDistance);
-            // Orient circle perpendicular to beam
-            indicator.lookAt(indicator.position.clone().add(beamDir));
+            
+            // Orient circle perpendicular to beam axis
+            // Use quaternion to align the circle's normal with beam direction
+            const up = new THREE.Vector3(0, 0, 1);
+            const quaternion = new THREE.Quaternion().setFromUnitVectors(up, beamDir);
+            indicator.quaternion.copy(quaternion);
+            
             indicator.userData.beamId = beam.userData.id;
             indicator.userData.nodeEnd = 'i';
             sceneData.releaseIndicatorsGroup.add(indicator);
@@ -1121,8 +1180,12 @@ export async function init_three_canvas(canvas) {
         if (jNodeReleased) {
             const indicator = createPinnedReleaseIndicator();
             indicator.position.copy(jNode).addScaledVector(beamDir, -offsetDistance);
-            // Orient circle perpendicular to beam
-            indicator.lookAt(indicator.position.clone().add(beamDir));
+            
+            // Orient circle perpendicular to beam axis
+            const up = new THREE.Vector3(0, 0, 1);
+            const quaternion = new THREE.Quaternion().setFromUnitVectors(up, beamDir);
+            indicator.quaternion.copy(quaternion);
+            
             indicator.userData.beamId = beam.userData.id;
             indicator.userData.nodeEnd = 'j';
             sceneData.releaseIndicatorsGroup.add(indicator);
@@ -1131,11 +1194,18 @@ export async function init_three_canvas(canvas) {
     
     // Update all beam release indicators
     window.updateAllReleaseIndicators = () => {
-        if (!sceneData || !sceneData.beamsGroup) return;
+        if (!sceneData || !sceneData.beamsGroup) {
+            console.log('updateAllReleaseIndicators: No sceneData or beamsGroup');
+            return;
+        }
+        
+        console.log('updateAllReleaseIndicators: Checking', sceneData.beamsGroup.children.length, 'beams');
         
         sceneData.beamsGroup.children.forEach(beam => {
             updateBeamReleaseIndicators(beam);
         });
+        
+        console.log('Release indicators group now has', sceneData.releaseIndicatorsGroup?.children.length || 0, 'children');
     };
     
     // Set releases for selected beam(s) - MUST BE AFTER updateBeamReleaseIndicators

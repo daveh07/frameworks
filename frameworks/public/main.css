@@ -373,29 +373,29 @@ input:focus, select:focus, textarea:focus {
   width: 32px;
   height: 32px;
   padding: 6px;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--radius-lg);
-  color: var(--color-text-secondary);
-  transition: var(--transition);
+  background: #ffffff;
+  border: 1px solid #bdbdbd;
+  border-radius: 3px;
+  color: #616161;
+  transition: all 0.15s ease;
   cursor: pointer;
 }
 
 .tool-button-icon:hover {
-  background: var(--color-bg-tertiary);
-  border-color: var(--color-border-light);
-  color: var(--color-text);
+  background: #f5f5f5;
+  border-color: #9e9e9e;
+  color: #424242;
 }
 
 .tool-button-icon:active {
-  background: var(--color-bg-panel);
+  background: #eeeeee;
   transform: scale(0.95);
 }
 
 .tool-button-icon.active {
-  background: var(--color-primary-light);
-  border-color: var(--color-primary);
-  color: #ffffff;
+  background: #ffffff;
+  border-color: #1976d2;
+  color: #1976d2;
 }
 
 .btn-icon {
@@ -436,24 +436,26 @@ input:focus, select:focus, textarea:focus {
   justify-content: center;
   width: 28px;
   height: 28px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-text-secondary);
+  border: 1px solid #bdbdbd;
+  border-radius: 3px;
+  background: #ffffff;
+  color: #616161;
   font-weight: 600;
   font-size: 10px;
   cursor: pointer;
+  transition: all 0.15s ease;
 }
 
 .view-option-btn:hover {
-  background: var(--color-bg-panel);
-  color: var(--color-primary);
+  background: #f5f5f5;
+  border-color: #9e9e9e;
+  color: #424242;
 }
 
 .view-option-btn.active {
-  background: var(--color-primary);
-  color: white;
-  border-color: var(--color-primary);
+  background: #ffffff;
+  color: #1976d2;
+  border-color: #1976d2;
 }
 
 /* Smaller toolbar buttons */
@@ -464,27 +466,26 @@ input:focus, select:focus, textarea:focus {
   min-width: 28px;
   height: 28px;
   padding: 4px 8px;
-  background: var(--color-bg-tertiary);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  color: var(--color-text-secondary);
+  background: #ffffff;
+  border: 1px solid #bdbdbd;
+  border-radius: 3px;
+  color: #616161;
   font-size: 10px;
   font-weight: 600;
-  transition: var(--transition);
+  transition: all 0.15s ease;
   cursor: pointer;
 }
 
 .tool-button-small:hover {
-  background: var(--color-bg-secondary);
-  border-color: var(--color-primary);
-  color: var(--color-primary);
-  box-shadow: var(--shadow-sm);
+  background: #f5f5f5;
+  border-color: #9e9e9e;
+  color: #424242;
 }
 
 .tool-button-small.active {
-  background: var(--color-primary);
-  border-color: var(--color-primary);
-  color: #ffffff;
+  background: #ffffff;
+  border-color: #1976d2;
+  color: #1976d2;
 }
 
 /* Single container with unified border */
@@ -1252,79 +1253,84 @@ input:focus, select:focus, textarea:focus {
 
 .btn-primary {
   width: 100%;
-  padding: 6px 14px;
+  padding: 5px 10px;
   background: #ffffff;
-  border: 1.5px solid var(--color-primary-dark);
-  color: var(--color-primary-dark);
-  border-radius: 6px;
+  border: 1px solid #1976d2;
+  color: #1976d2;
+  border-radius: 3px;
   cursor: pointer;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 500;
-  letter-spacing: 0.01em;
+  letter-spacing: 0.02em;
   margin-bottom: 8px;
-  transition: all 0.2s ease;
+  transition: all 0.15s ease;
 }
 
 .btn-primary:hover {
-  background: rgba(1, 87, 155, 0.06);
-  border-color: var(--color-primary-dark);
-  color: var(--color-primary-dark);
+  background: #f5f5f5;
+  border-color: #1565c0;
+  color: #1565c0;
 }
 
 .btn-primary:active {
-  background: rgba(1, 87, 155, 0.12);
+  background: #eeeeee;
+  border-color: #0d47a1;
 }
 
 .btn-group {
   display: flex;
-  gap: 8px;
+  gap: 6px;
 }
 
 .btn-secondary {
   flex: 1;
-  padding: 6px 14px;
+  padding: 5px 10px;
   background: #ffffff;
-  color: var(--color-primary-dark);
-  border: 1.5px solid var(--color-primary-dark);
-  border-radius: 6px;
+  color: #424242;
+  border: 1px solid #bdbdbd;
+  border-radius: 3px;
   cursor: pointer;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 500;
   letter-spacing: 0.01em;
-  transition: all 0.2s ease;
+  transition: all 0.15s ease;
 }
 
 .btn-secondary:hover {
-  background: rgba(1, 87, 155, 0.06);
+  background: #f5f5f5;
+  border-color: #9e9e9e;
+  color: #212121;
 }
 
 .btn-secondary:active {
-  background: rgba(1, 87, 155, 0.12);
+  background: #eeeeee;
+  border-color: #757575;
 }
 
 .btn-secondary:last-child {
   background: #ffffff;
-  color: var(--color-primary-dark);
-  border: 1.5px solid var(--color-primary-dark);
+  color: #424242;
+  border: 1px solid #bdbdbd;
 }
 
 .btn-secondary:last-child:hover {
-  background: rgba(1, 87, 155, 0.06);
+  background: #f5f5f5;
+  border-color: #9e9e9e;
 }
 
 /* Danger variant (Clear) */
 .btn-danger,
 .danger {
   background: #ffffff;
-  border: 1.5px solid #dc3545;
-  color: #dc3545;
+  border: 1px solid #e57373;
+  color: #c62828;
 }
 
 .btn-danger:hover,
 .danger:hover {
-  background: #fff5f5;
-  border-color: #c82333;
-  color: #c82333;
+  background: #ffebee;
+  border-color: #ef5350;
+  color: #b71c1c;
 }
 
 .btn-danger:active,
@@ -1714,9 +1720,9 @@ input:focus, select:focus, textarea:focus {
   display: block;
   width: 100%;
   padding: 10px 16px;
-  background: #0066cc;
-  color: white;
-  border: none;
+  background: #ffffff;
+  color: #1976d2;
+  border: 1px solid #1976d2;
   border-radius: 4px;
   font-size: 13px;
   font-weight: 500;
@@ -1725,7 +1731,9 @@ input:focus, select:focus, textarea:focus {
 }
 
 .split-beam-panel .btn-primary:hover {
-  background: #0052a3;
+  background: #f5f5f5;
+  border-color: #1565c0;
+  color: #1565c0;
 }
 
 .split-beam-panel .btn-primary:disabled {
@@ -1792,32 +1800,40 @@ input:focus, select:focus, textarea:focus {
 }
 
 .analysis-panel .results-container {
-    margin-top: 1rem;
-    padding: 1rem;
-    background: #f8f9fa;
-    border-radius: 4px;
+    margin-top: 12px;
+    padding: 10px;
+    background: #fafafa;
+    border: 1px solid #e0e0e0;
+    border-radius: 3px;
 }
 
-.analysis-panel .result-stat {
+.analysis-panel .result-stat,
+.analysis-panel .result-item {
     display: flex;
     justify-content: space-between;
-    padding: 0.5rem 0;
-    border-bottom: 1px solid #e0e0e0;
+    align-items: center;
+    padding: 6px 0;
+    border-bottom: 1px solid #eeeeee;
 }
 
-.analysis-panel .result-stat:last-child {
+.analysis-panel .result-stat:last-child,
+.analysis-panel .result-item:last-child {
     border-bottom: none;
 }
 
-.analysis-panel .stat-label {
+.analysis-panel .stat-label,
+.analysis-panel .result-label {
+    font-size: 11px;
     font-weight: 500;
-    color: #666;
+    color: #616161;
 }
 
-.analysis-panel .stat-value {
-    font-family: 'Courier New', monospace;
-    color: #333;
+.analysis-panel .stat-value,
+.analysis-panel .result-value {
+    font-family: var(--font-mono);
+    font-size: 11px;
     font-weight: 600;
+    color: #1976d2;
 }
 
 .analysis-panel .results-section {
@@ -1909,40 +1925,42 @@ input:focus, select:focus, textarea:focus {
     margin-bottom: 0.25rem;
 }
 
-/* Analysis Panel Results Section - Professional FEA Styling */
+/* Analysis Panel Results Section - Professional Engineering Style */
 .analysis-panel .results-section {
-    margin-top: 1rem;
+    margin-top: 12px;
     padding: 12px;
-    background: rgba(0, 122, 255, 0.03);
-    border: 1px solid rgba(0, 122, 255, 0.08);
-    border-radius: 8px;
+    background: #fafafa;
+    border: 1px solid #e0e0e0;
+    border-radius: 3px;
 }
 
 .analysis-panel .results-header {
-    font-size: 0.875rem;
+    font-size: 11px;
     font-weight: 600;
-    color: #28a745;
-    margin-bottom: 0.5rem;
-    padding-bottom: 0.5rem;
-    border-bottom: 1px solid #dee2e6;
+    color: #2e7d32;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #e0e0e0;
 }
 
 .analysis-panel .results-info {
-    font-size: 0.75rem;
-    color: #6c757d;
-    margin-bottom: 0.75rem;
+    font-size: 11px;
+    color: #757575;
+    margin-bottom: 10px;
 }
 
 .analysis-panel .diagram-controls {
-    margin-bottom: 1rem;
+    margin-bottom: 12px;
 }
 
 .analysis-panel .control-group-label {
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 600;
-    color: rgba(0, 0, 0, 0.45);
+    color: #9e9e9e;
     text-transform: uppercase;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.04em;
     margin: 16px 0 8px;
 }
 
@@ -1956,74 +1974,124 @@ input:focus, select:focus, textarea:focus {
 .analysis-panel .diagram-btn {
     flex: 1;
     min-width: 70px;
-  padding: 6px 14px;
-  background: #ffffff;
-  border: 1.5px solid var(--color-primary-dark);
-  border-radius: 6px;
-    font-size: 12px;
+    padding: 5px 8px;
+    background: #ffffff;
+    border: 1px solid #bdbdbd;
+    border-radius: 3px;
+    font-size: 11px;
     font-weight: 500;
-  color: var(--color-primary-dark);
+    color: #424242;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: all 0.15s ease;
     text-align: center;
 }
 
 .analysis-panel .diagram-btn:hover {
-  background: rgba(1, 87, 155, 0.06);
+    background: #f5f5f5;
+    border-color: #9e9e9e;
+    color: #212121;
 }
 
 .analysis-panel .diagram-btn:active {
-  background: rgba(1, 87, 155, 0.12);
+    background: #eeeeee;
+    border-color: #757575;
 }
 
-/* Stress buttons - distinct color scheme */
+/* Stress buttons - same style as other buttons */
 .analysis-panel .diagram-btn.stress-btn {
-  border-color: #7c3aed;
-  color: #7c3aed;
-  background: #faf5ff;
+    border-color: #bdbdbd;
+    color: #424242;
+    background: #ffffff;
 }
 
 .analysis-panel .diagram-btn.stress-btn:hover {
-  background: #ede9fe;
-  border-color: #6d28d9;
-  color: #6d28d9;
+    background: #f5f5f5;
+    border-color: #9e9e9e;
+    color: #212121;
 }
 
 .analysis-panel .diagram-btn.stress-btn:active {
-  background: #ddd6fe;
+    background: #eeeeee;
 }
 
 .analysis-panel .diagram-btn.danger {
-  border-color: #dc3545;
-  color: #dc3545;
+    border-color: #e57373;
+    color: #c62828;
+    background: #ffffff;
 }
 
 .analysis-panel .diagram-btn.danger:hover {
-  background: #fff5f5;
-  border-color: #c82333;
-  color: #c82333;
+    background: #ffebee;
+    border-color: #ef5350;
+    color: #b71c1c;
 }
 
 .analysis-panel .diagram-btn.danger:active {
-  background: #ffecec;
+    background: #ffcdd2;
+}
+
+/* Slider styling for range inputs */
+.analysis-panel input[type="range"],
+input[type="range"].scale-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 4px;
+    background: #e0e0e0;
+    border-radius: 2px;
+    outline: none;
+    margin: 8px 0;
+}
+
+.analysis-panel input[type="range"]::-webkit-slider-thumb,
+input[type="range"].scale-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    background: #1976d2;
+    border-radius: 50%;
+    cursor: pointer;
+    border: 2px solid #ffffff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    transition: all 0.15s ease;
+}
+
+.analysis-panel input[type="range"]::-webkit-slider-thumb:hover,
+input[type="range"].scale-slider::-webkit-slider-thumb:hover {
+    background: #1565c0;
+    transform: scale(1.1);
+}
+
+.analysis-panel input[type="range"]::-moz-range-thumb,
+input[type="range"].scale-slider::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    background: #1976d2;
+    border-radius: 50%;
+    cursor: pointer;
+    border: 2px solid #ffffff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
 
 .analysis-panel .contour-controls {
-    margin-bottom: 1rem;
-    padding-top: 0.75rem;
-    border-top: 1px solid #dee2e6;
+    margin-bottom: 12px;
+    padding-top: 10px;
+    border-top: 1px solid #e0e0e0;
 }
 
 .analysis-panel .control-row {
-  margin-bottom: 8px;
+    margin-bottom: 10px;
 }
 
 .analysis-panel .control-row label {
     display: block;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 500;
-  color: var(--color-text-secondary);
-  margin-bottom: 4px;
+    color: #616161;
+    margin-bottom: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
 }
 
 .analysis-panel .contour-select {
@@ -2094,49 +2162,54 @@ input:focus, select:focus, textarea:focus {
 
 .analysis-panel .debug-btn {
     flex: 1;
-    padding: 7px 10px;
-    background: transparent;
-    border: 1px solid #6c757d;
-    border-radius: 4px;
-    font-size: 0.6875rem;
+    padding: 5px 8px;
+    background: #ffffff;
+    border: 1px solid #bdbdbd;
+    border-radius: 3px;
+    font-size: 10px;
     font-weight: 500;
-    color: #6c757d;
+    color: #757575;
     cursor: pointer;
     transition: all 0.15s ease;
 }
 
 .analysis-panel .debug-btn:hover {
-    background: #6c757d;
-    color: #fff;
+    background: #f5f5f5;
+    border-color: #9e9e9e;
+    color: #424242;
 }
 
-/* Run Analysis Button */
+/* Run Analysis Button - Professional outlined style */
 .analysis-panel .btn-analysis-run {
     width: 100%;
-  padding: 6px 14px;
-  background: #ffffff;
-  border: 1.5px solid var(--color-primary-dark);
-  border-radius: 6px;
-  font-size: 12px;
-    font-weight: 500;
-  color: var(--color-primary-dark);
+    padding: 8px 14px;
+    background: #ffffff;
+    border: 1px solid #1976d2;
+    border-radius: 3px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #1976d2;
     cursor: pointer;
-    transition: all 0.2s ease;
-  letter-spacing: 0.01em;
+    transition: all 0.15s ease;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
 }
 
 .analysis-panel .btn-analysis-run:hover:not(:disabled) {
-  background: rgba(1, 87, 155, 0.06);
+    background: #e3f2fd;
+    border-color: #1565c0;
+    color: #1565c0;
 }
 
 .analysis-panel .btn-analysis-run:active:not(:disabled) {
-  background: rgba(1, 87, 155, 0.12);
+    background: #bbdefb;
+    border-color: #0d47a1;
 }
 
 .analysis-panel .btn-analysis-run:disabled {
-  background: #ffffff;
-  border-color: var(--color-border);
-  color: var(--color-text-muted);
+    background: #fafafa;
+    border-color: #e0e0e0;
+    color: #9e9e9e;
     cursor: not-allowed;
 }
 
@@ -2236,14 +2309,14 @@ input:focus, select:focus, textarea:focus {
 }
 
 .section-type-buttons button:hover {
-    background: #e9ecef;
-    border-color: #ced4da;
+    background: #f5f5f5;
+    border-color: #9e9e9e;
 }
 
 .section-type-buttons button.active {
-    background: var(--color-primary);
-    border-color: var(--color-primary);
-    color: white;
+    background: #ffffff;
+    border-color: #1976d2;
+    color: #1976d2;
 }
 
 /* Material Presets (Material Properties) */
@@ -2267,14 +2340,14 @@ input:focus, select:focus, textarea:focus {
 }
 
 .material-presets button:hover {
-    background: #e9ecef;
-    border-color: #ced4da;
+    background: #f5f5f5;
+    border-color: #9e9e9e;
 }
 
 .material-presets button.active {
-    background: #2e7d32;
-    border-color: #2e7d32;
-    color: white;
+    background: #ffffff;
+    border-color: #1976d2;
+    color: #1976d2;
 }
 
 /* Thickness Presets (Shell Properties) */
@@ -2297,14 +2370,14 @@ input:focus, select:focus, textarea:focus {
 }
 
 .thickness-presets button:hover {
-    background: #e9ecef;
-    border-color: #ced4da;
+    background: #f5f5f5;
+    border-color: #9e9e9e;
 }
 
 .thickness-presets button.active {
-    background: var(--color-primary);
-    border-color: var(--color-primary);
-    color: white;
+    background: #ffffff;
+    border-color: #1976d2;
+    color: #1976d2;
 }
 
 /* Element Type Buttons (Shell Properties) */
@@ -2329,12 +2402,13 @@ input:focus, select:focus, textarea:focus {
 }
 
 .element-type-buttons label:hover {
-    background: #e9ecef;
+    background: #f5f5f5;
 }
 
 .element-type-buttons label.active {
-    background: #e3f2fd;
-    border-color: var(--color-primary);
+    background: #ffffff;
+    border-color: #1976d2;
+    color: #1976d2;
 }
 
 .element-type-buttons input[type="radio"] {
@@ -2486,9 +2560,9 @@ input:focus, select:focus, textarea:focus {
 .release-apply .apply-btn {
     flex: 1;
     padding: 10px 16px;
-    background: #0066cc;
-    color: white;
-    border: none;
+    background: #ffffff;
+    color: #1976d2;
+    border: 1px solid #1976d2;
     border-radius: 6px;
     font-size: 13px;
     font-weight: 600;
@@ -2497,7 +2571,9 @@ input:focus, select:focus, textarea:focus {
 }
 
 .release-apply .apply-btn:hover {
-    background: #0052a3;
+    background: #f5f5f5;
+    border-color: #1565c0;
+    color: #1565c0;
 }
 
 .release-apply .apply-btn.highlight {
@@ -2798,11 +2874,11 @@ input:focus, select:focus, textarea:focus {
 .btn-analysis-run {
     width: 100%;
     padding: var(--spacing-lg);
-    background: var(--color-primary);
-    color: #ffffff;
+    background: #ffffff;
+    color: #1976d2;
     font-size: var(--text-md);
     font-weight: 600;
-    border: none;
+    border: 1px solid #1976d2;
     border-radius: var(--radius-md);
     cursor: pointer;
     transition: var(--transition);
@@ -2811,8 +2887,9 @@ input:focus, select:focus, textarea:focus {
 }
 
 .btn-analysis-run:hover:not(:disabled) {
-    background: var(--color-primary-dark);
-    box-shadow: var(--shadow-md);
+    background: #f5f5f5;
+    border-color: #1565c0;
+    color: #1565c0;
 }
 
 .btn-analysis-run:disabled {
@@ -2948,11 +3025,11 @@ input:focus, select:focus, textarea:focus {
 
 .btn-postproc {
     padding: var(--spacing-md);
-    background: var(--color-primary);
-    color: #ffffff;
+    background: #ffffff;
+    color: #1976d2;
     font-size: var(--text-sm);
     font-weight: 600;
-    border: none;
+    border: 1px solid #1976d2;
     border-radius: var(--radius-md);
     cursor: pointer;
     text-transform: uppercase;
@@ -2961,7 +3038,9 @@ input:focus, select:focus, textarea:focus {
 }
 
 .btn-postproc:hover {
-    background: var(--color-primary-dark);
+    background: #f5f5f5;
+    border-color: #1565c0;
+    color: #1565c0;
 }
 
 /* Diagram Buttons */
@@ -3220,13 +3299,15 @@ input:focus, select:focus, textarea:focus {
 }
 
 .btn-save {
-    background: var(--color-primary);
-    border: 1px solid var(--color-primary);
-    color: #ffffff;
+    background: #ffffff;
+    border: 1px solid #1976d2;
+    color: #1976d2;
 }
 
 .btn-save:hover {
-    background: var(--color-primary-dark);
+    background: #f5f5f5;
+    border-color: #1565c0;
+    color: #1565c0;
 }
 
 .btn-cancel {
@@ -3309,9 +3390,9 @@ input:focus, select:focus, textarea:focus {
     padding: 8px 16px;
     font-size: 13px;
     font-weight: 500;
-    background: var(--color-primary);
-    border: 1px solid var(--color-primary);
-    color: #ffffff;
+    background: #ffffff;
+    border: 1px solid #1976d2;
+    color: #1976d2;
     border-radius: var(--radius-sm);
     cursor: pointer;
     transition: var(--transition);
@@ -3319,5 +3400,7 @@ input:focus, select:focus, textarea:focus {
 }
 
 .btn-add:hover {
-    background: var(--color-primary-dark);
+    background: #f5f5f5;
+    border-color: #1565c0;
+    color: #1565c0;
 }

@@ -498,7 +498,16 @@ function createPressureLoadVisual(load, plate) {
     group.userData.isLoad = true;
     group.userData.loadId = load.id;
     
-    const color = load.color ? parseInt(load.color.replace('#', '0x')) : 0xff0000;
+    // Parse color safely - handle string '#rrggbb', number 0xrrggbb, or use default red
+    let color = 0xff0000;
+    if (load.color) {
+        if (typeof load.color === 'string') {
+            color = parseInt(load.color.replace('#', ''), 16);
+        } else if (typeof load.color === 'number') {
+            color = load.color;
+        }
+    }
+    console.log(`Pressure load color: ${color.toString(16)}`);
     
     // Ensure plate matrix world is updated
     plate.updateMatrixWorld(true);
@@ -506,8 +515,26 @@ function createPressureLoadVisual(load, plate) {
     // 1. Create Shaded Rectangle (Overlay)
     // We clone the geometry and apply the plate's world matrix to it.
     // This transforms the vertices into World Space.
-    const geometry = plate.geometry.clone();
-    geometry.applyMatrix4(plate.matrixWorld);
+    // Handle case where plate might be a Group with child meshes
+    let geometry = null;
+    if (plate.geometry) {
+        geometry = plate.geometry.clone();
+        geometry.applyMatrix4(plate.matrixWorld);
+    } else if (plate.children) {
+        // Find first child mesh with geometry
+        const childMesh = plate.children.find(c => c.isMesh && c.geometry);
+        if (childMesh) {
+            childMesh.updateMatrixWorld(true);
+            geometry = childMesh.geometry.clone();
+            geometry.applyMatrix4(childMesh.matrixWorld);
+            console.log('Using geometry from child mesh');
+        }
+    }
+    
+    if (!geometry || !geometry.attributes || !geometry.attributes.position) {
+        console.error('Plate has no geometry or no position attribute - cannot create pressure visual');
+        return group; // Return empty group
+    }
     
     // Calculate normal in world space using the transformed geometry
     geometry.computeVertexNormals();
